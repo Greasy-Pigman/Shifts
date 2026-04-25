@@ -7,62 +7,62 @@
   <title>Shift Tracker</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
-    html,body{height:100%;background:#0F1117;color:#E2E8F0;}
-    #root{height:100%;}
-    #loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F1117;color:#94A3B8;font-family:monospace;gap:12px;font-size:13px;}
-    #error{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F1117;color:#F87171;font-family:monospace;gap:8px;font-size:12px;padding:20px;text-align:center;display:none;}
+    html,body,#root{height:100%;background:#0F1117;color:#E2E8F0;}
+    input,button,textarea,select{font-family:inherit;}
+    #loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F1117;color:#94A3B8;font-family:monospace;gap:12px;font-size:13px;z-index:999;}
+    #errbox{position:fixed;inset:0;background:#0F1117;color:#F87171;font-family:monospace;padding:20px;display:none;flex-direction:column;gap:8px;overflow:auto;font-size:11px;}
+    @keyframes spin{to{transform:rotate(360deg)}}
     ::-webkit-scrollbar{width:4px;}
     ::-webkit-scrollbar-thumb{background:#2D3748;border-radius:2px;}
   </style>
 </head>
 <body>
-  <div id="loading">
-    <div style="width:32px;height:32px;border:3px solid #1E293B;border-top:3px solid #3B82F6;border-radius:50%;animation:spin 1s linear infinite;"></div>
-    <span>Loading Shift Tracker...</span>
-    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-  </div>
-  <div id="error"></div>
-  <div id="root"></div>
+<div id="loading">
+  <div style="width:36px;height:36px;border:3px solid #1E293B;border-top:3px solid #3B82F6;border-radius:50%;animation:spin 1s linear infinite"></div>
+  <div>Loading Shift Tracker...</div>
+  <div id="loadstep" style="font-size:10px;opacity:0.5">Initialising...</div>
+</div>
+<div id="errbox"></div>
+<div id="root"></div>
 
-  <script>
-    window.onerror = function(msg, src, line, col, err) {
-      document.getElementById('loading').style.display = 'none';
-      var el = document.getElementById('error');
-      el.style.display = 'flex';
-      el.innerHTML = '<strong style="font-size:16px">Error loading app</strong><code style="background:#1E293B;padding:8px;border-radius:4px;word-break:break-all">' + msg + '</code><small>Line ' + line + ' Col ' + col + '</small>';
-    };
+<script>
+function showErr(title, detail) {
+  document.getElementById('loading').style.display='none';
+  var b=document.getElementById('errbox');
+  b.style.display='flex';
+  b.innerHTML='<strong style="font-size:18px;color:#F87171">'+title+'</strong><pre style="background:#1E293B;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:10px">'+detail+'</pre>';
+}
+window.onerror=function(m,s,l,c,e){showErr('Runtime Error', m+'\nLine:'+l+'\n'+(e&&e.stack||''));return true;};
+window.onunhandledrejection=function(e){showErr('Promise Error',(e.reason&&e.reason.message)||String(e.reason));};
 
-    // Storage shim — replaces Claude artifact window.storage with localStorage
-    window.storage = {
-      get: async function(key) {
-        var val = localStorage.getItem(key);
-        if (val === null) throw new Error('Not found: ' + key);
-        return { key: key, value: val };
-      },
-      set: async function(key, value) {
-        try {
-          localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
-          return { key: key, value: value };
-        } catch(e) { return null; }
-      },
-      delete: async function(key) {
-        localStorage.removeItem(key);
-        return { key: key, deleted: true };
-      },
-      list: async function(prefix) {
-        var keys = Object.keys(localStorage).filter(function(k){ return !prefix || k.startsWith(prefix); });
-        return { keys: keys };
-      }
-    };
-  </script>
+document.getElementById('loadstep').textContent='Setting up storage...';
+window.storage={
+  get:async function(k){var v=localStorage.getItem(k);if(v===null)throw new Error('Not found: '+k);return{key:k,value:v};},
+  set:async function(k,v){try{localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v));return{key:k,value:v};}catch(e){return null;}},
+  delete:async function(k){localStorage.removeItem(k);return{key:k,deleted:true};},
+  list:async function(p){var keys=Object.keys(localStorage).filter(function(k){return!p||k.startsWith(p);});return{keys:keys};}
+};
+</script>
 
-  <!-- React 18 -->
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <!-- Babel standalone for JSX -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<!-- Load React from unpkg (more reliable fallback) -->
+<script>
+document.getElementById('loadstep').textContent='Loading React...';
+</script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" 
+  onerror="showErr('Failed to load React','Could not load from unpkg. Check your internet connection.')">
+</script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+  onerror="showErr('Failed to load ReactDOM','Could not load from unpkg.')">
+</script>
+<script>
+document.getElementById('loadstep').textContent='Loading compiler...';
+</script>
+<script src="https://unpkg.com/@babel/standalone@7.23.2/babel.min.js"
+  onerror="showErr('Failed to load Babel','Could not load JSX compiler from unpkg.')">
+</script>
 
-  <script type="text/babel" data-presets="react,env" data-plugins="transform-class-properties">
+<script type="text/babel" data-presets="react,env">
+document.getElementById('loadstep').textContent = 'Starting app...';
 try {
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -2105,15 +2105,13 @@ function App(){
 }
 
 
-  const root = ReactDOM.createRoot(document.getElementById('root'));
+  const container = document.getElementById('root');
+  const root = ReactDOM.createRoot(container);
   root.render(React.createElement(App));
   document.getElementById('loading').style.display = 'none';
 } catch(e) {
-  document.getElementById('loading').style.display = 'none';
-  var el = document.getElementById('error');
-  el.style.display = 'flex';
-  el.innerHTML = '<strong style="font-size:16px">App Error</strong><code style="background:#1E293B;padding:8px;border-radius:4px;word-break:break-all">' + e.message + '</code><pre style="font-size:10px;color:#94A3B8;max-height:200px;overflow:auto">' + (e.stack||'') + '</pre>';
+  showErr('App Error', e.message + '\n\n' + (e.stack||''));
 }
-  </script>
+</script>
 </body>
 </html>
