@@ -1,0 +1,2111 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="theme-color" content="#0F1117"/>
+  <title>Shift Tracker</title>
+  <link rel="manifest" href="manifest.json"/>
+
+  <!-- React + Babel for JSX -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{height:100%;background:#0F1117;color:#E2E8F0;font-family:system-ui,-apple-system,sans-serif;}
+    #root{height:100%;}
+    input,button,textarea,select{font-family:inherit;}
+    ::-webkit-scrollbar{width:4px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:#2D3748;border-radius:2px;}
+
+    /* Claude artifact storage shim for GitHub Pages */
+    /* window.storage is replaced by localStorage below */
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Storage shim: replaces window.storage (artifact API) with localStorage -->
+  <script>
+    window.storage = {
+      get: async function(key) {
+        try {
+          const val = localStorage.getItem(key);
+          if (val === null) throw new Error('Key not found: ' + key);
+          return { key, value: val };
+        } catch(e) { throw e; }
+      },
+      set: async function(key, value) {
+        try {
+          localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+          return { key, value };
+        } catch(e) { return null; }
+      },
+      delete: async function(key) {
+        try {
+          localStorage.removeItem(key);
+          return { key, deleted: true };
+        } catch(e) { return null; }
+      },
+      list: async function(prefix) {
+        try {
+          const keys = Object.keys(localStorage)
+            .filter(k => !prefix || k.startsWith(prefix));
+          return { keys };
+        } catch(e) { return { keys: [] }; }
+      }
+    };
+  </script>
+
+  <script type="text/babel" data-presets="react">
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ── Config ────────────────────────────────────────────────
+const CLIENT_ID  = "657282377889-dp61g88r0et9aoc7m20t2msf72fmb779.apps.googleusercontent.com";
+const SCOPES     = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file";
+const CAL_API    = "https://www.googleapis.com/calendar/v3";
+const SHIFTS_KEY = "yotam_shifts_v3";
+const TOKEN_KEY  = "yotam_gtoken";
+const NOTIF_KEY  = "yotam_notif_dismissed";
+const ARCHIVE_KEY= "yotam_archive_index";
+const FILE_PFX   = "yotam_file_";
+const WEEK_PFX   = "yotam_week_";
+const DRIVE_API  = "https://www.googleapis.com/drive/v3";
+const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+const DRIVE_FILE_NAME = "shifts-tracker-data.json";
+const MY_NAME    = "יותם";
+const BASE_RATE  = 44; const PENSION = 4;
+const SHABBAT_R  = 66; const HOLIDAY_R = 88;
+const OT_THRESH_DAY   = 8;  // 6-day workweek: OT after 8h
+const OT_THRESH_NIGHT = 7;  // Night shift (2h+ between 22:00-06:00): OT after 7h
+const YEAR       = new Date().getFullYear();
+
+// ── Israeli holidays 2026 (affect pay rate) ──────────────
+const IL_HOLIDAYS = {
+  // ── Purim ──
+  "2026-03-13":["Erev Purim",150],
+  "2026-03-14":["Purim",150],
+  // ── Pesach ── (Israel: first+last day 200%, Chol HaMoed 150%)
+  "2026-04-01":["Erev Pesach",150],
+  "2026-04-02":["Pesach Day 1",200],
+  "2026-04-03":["Pesach Chol HaMoed",150],
+  "2026-04-04":["Pesach Chol HaMoed",150],
+  "2026-04-05":["Pesach Chol HaMoed",150],
+  "2026-04-06":["Pesach Chol HaMoed",150],
+  "2026-04-07":["Pesach Chol HaMoed",150],
+  "2026-04-08":["Pesach Day 7",200],
+  // ── Yom HaAtzmaut ── eve starts sundown 21 Apr, main day 22 Apr
+  "2026-04-21":["Erev Yom HaAtzmaut",200],
+  "2026-04-22":["Yom HaAtzmaut",200],
+  // ── Shavuot ── (Israel: 1 day only, 22 May)
+  "2026-05-21":["Erev Shavuot",150],
+  "2026-05-22":["Shavuot",200],
+  // ── Rosh Hashana ── 2 days
+  "2026-09-11":["Erev Rosh Hashana",150],
+  "2026-09-12":["Rosh Hashana Day 1",200],
+  "2026-09-13":["Rosh Hashana Day 2",200],
+  // ── Yom Kippur ──
+  "2026-09-20":["Erev Yom Kippur",150],
+  "2026-09-21":["Yom Kippur",200],
+  // ── Sukkot ── (Israel: day 1 + Shemini Atzeret 200%, Chol HaMoed 150%)
+  "2026-09-24":["Erev Sukkot",150],
+  "2026-09-25":["Sukkot Day 1",200],
+  "2026-09-26":["Sukkot Chol HaMoed",150],
+  "2026-09-27":["Sukkot Chol HaMoed",150],
+  "2026-09-28":["Sukkot Chol HaMoed",150],
+  "2026-09-29":["Sukkot Chol HaMoed",150],
+  "2026-09-30":["Sukkot Chol HaMoed",150],
+  "2026-10-01":["Hoshana Raba",150],
+  "2026-10-02":["Shemini Atzeret / Simchat Torah",200],
+};
+function getHoliday(date){ return IL_HOLIDAYS[date]||null; }
+function holidayRate(date){ const h=getHoliday(date); if(!h)return null; return h[1]===200?HOLIDAY_R:SHABBAT_R; }
+// For erev holidays starting at 18:00, check if shift overlaps the premium window
+function isErevShift(sh){
+  // Erev dates: shift must start at/after 18:00 to get holiday rate
+  const h=getHoliday(sh.date);
+  if(!h||!h[0].startsWith("Erev")) return false;
+  const st=parseT(sh.startTime);
+  return st&&toMin(st)>=18*60;
+}
+
+// ── Helpers ───────────────────────────────────────────────
+const todayD = () => new Date(new Date().toDateString());
+const parseT  = s => { const m = String(s||"").trim().match(/^(\d{1,2}):(\d{2})$/); return m?{h:+m[1],m:+m[2]}:null; };
+const toMin   = t => t ? t.h*60+t.m : null;
+const fmt2    = n => String(n).padStart(2,"0");
+const fmtT    = t => t ? `${fmt2(t.h)}:${fmt2(t.m)}` : null;
+const daysBetween = (a,b) => Math.floor((b-a)/86400000);
+// Parse YYYY-MM-DD as LOCAL date (not UTC) to avoid timezone shift issues
+function parseLocalDate(ds){ if(!ds)return null; const[y,m,d]=ds.split("-").map(Number); return new Date(y,m-1,d); }
+const fmtDate  = ds => ds ? parseLocalDate(ds).toLocaleDateString("he-IL",{weekday:"short",day:"2-digit",month:"2-digit",year:"2-digit"}) : "";
+const fmtShort = ds => ds ? parseLocalDate(ds).toLocaleDateString("he-IL",{day:"2-digit",month:"2-digit"}) : "";
+const fmtFull  = ds => ds ? parseLocalDate(ds).toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short"}) : "";
+
+function shiftHrs(s,e,cross){ if(!s||!e)return null; let d=toMin(e)-toMin(s); if(cross||d<0)d+=1440; return +(d/60).toFixed(2); }
+function shiftHrsNum(sh){ const s=parseT(sh.startTime),e=parseT(sh.endTime); if(!s||!e)return null; let d=toMin(e)-toMin(s); if(sh.crossesMidnight||d<0)d+=1440; return +(d/60).toFixed(1); }
+
+function shiftStatus(sh){
+  if(sh.flagged&&!sh.resolved) return "flagged";
+  const todayStr=new Date().toLocaleDateString("en-CA");
+  const isToday=sh.date===todayStr;
+  const isFuture=sh.date>todayStr;
+  const isPast=sh.date<todayStr;
+  // Future shifts = always estimated
+  if(isFuture) return "future";
+  // No end time
+  if(!sh.endTime){
+    if(isToday) return "future"; // flexible end today
+    // Past with no end time and no clock confirmation = flag it
+    if(isPast&&sh.clockStatus!=="confirmed") return "flagged";
+    return "closing"; // past clocked but no recorded end
+  }
+  // Has end time
+  if(sh.clockStatus==="clocked_in") return "clocked_in";
+  // Past/today: pending if tips field was never touched (empty string or undefined)
+  // "0" is a valid entry meaning "no tips" — counts as confirmed
+  // Check if this is a span shift (crosses 18:00 boundary)
+  const stH2=parseT(sh.startTime)?.h??0;
+  const etH2=parseT(sh.endTime)?.h??0;
+  const etM2=parseT(sh.endTime)?.m??0;
+  const isSpan=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>0));
+  if(isSpan){
+    // Span shift: need BOTH morning and evening tips entered
+    const mEntered=sh.morningTips!==undefined&&sh.morningTips!==null&&sh.morningTips!=="";
+    const eEntered=sh.eveningTips!==undefined&&sh.eveningTips!==null&&sh.eveningTips!=="";
+    if(!mEntered||!eEntered) return "pending";
+    return "confirmed";
+  }
+  // Regular shift: myTipCash must be entered
+  const tipsEntered=(sh.myTipCash!==undefined&&sh.myTipCash!==null&&sh.myTipCash!=="");
+  if(!tipsEntered) return "pending";
+  // Double shift: partial (only one shift has tips) = pending
+  if(sh.isDoubleShift&&sh.doublePartnerPending) return "pending";
+  return "confirmed";
+}
+function sMeta(st){
+  if(st==="confirmed")  return{label:"Confirmed", color:"#22C55E",bg:"#22C55E12",icon:"✓"};
+  if(st==="clocked_in") return{label:"Clocked In",color:"#FB923C",bg:"#FB923C12",icon:"◑"};
+  if(st==="future")     return{label:"Estimated", color:"#FBBF24",bg:"#FBBF2412",icon:"◷"};
+  if(st==="flagged")    return{label:"Flagged",   color:"#FBBF24",bg:"#FBBF2412",icon:"⚑"};
+  if(st==="pending")    return{label:"Pending",   color:"#FBBF24",bg:"#FBBF2412",icon:"○"};
+  if(st==="fail")       return{label:"Failed",    color:"#FCA5A5",bg:"#FCA5A512",icon:"✗"};
+  return                       {label:"Open End",  color:"#F87171",bg:"#F8717112",icon:"!"};
+}
+
+// Detect night shift: 2+ hours between 22:00-06:00
+function isNightShift(startTime, endTime, crossesMidnight){
+  const s=parseT(startTime), e=parseT(endTime);
+  if(!s||!e) return false;
+  // Count minutes between 22:00-06:00 (1320-360 min, wrapping midnight)
+  let nightMins=0, cur=toMin(s), end=toMin(e);
+  if(crossesMidnight||end<cur) end+=1440;
+  for(let m=cur;m<end;m++){
+    const mm=m%1440;
+    if(mm>=1320||mm<360) nightMins++;
+  }
+  return nightMins>=120; // 2+ hours at night
+}
+
+// Calculate pay for a single shift, with optional priorHrs (for double shift OT continuity)
+function calcShiftPay(sh, priorHrs=0){
+  const s=parseT(sh.startTime),e=parseT(sh.endTime);
+  const hrs=shiftHrs(s,e,sh.crossesMidnight); if(!hrs)return null;
+  // Shabbat/Holiday: flat rate, no OT tiers
+  // Erev days: only premium if shift starts at/after 18:00
+  // Exception: Erev Yom HaAtzmaut is 200% all day (national holiday eve)
+  const holEntry=getHoliday(sh.date);
+  const erev=holEntry?.[0]?.startsWith("Erev");
+  const fullDayErev=erev&&holEntry?.[0]?.includes("Yom HaAtzmaut");
+  const erevQualifies=!erev||fullDayErev||(parseT(sh.startTime)&&toMin(parseT(sh.startTime))>=18*60);
+  const isPremium=(sh.shiftType==="Holiday"||sh.shiftType==="Shabbat"||!!holidayRate(sh.date))&&erevQualifies;
+  if(isPremium){
+    const rate=sh.shiftType==="Holiday"?HOLIDAY_R:holidayRate(sh.date)||SHABBAT_R;
+    const tips=parseFloat(sh.myTipCash)||0;
+    return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
+  }
+  // Regular/OT calculation
+  const night=isNightShift(sh.startTime,sh.endTime,sh.crossesMidnight);
+  const thresh=night?OT_THRESH_NIGHT:OT_THRESH_DAY;
+  // OT is calculated on total day hours — priorHrs carries over from earlier shift same day
+  const totalHrsSoFar=priorHrs+hrs;
+  const regHrs=Math.max(0,Math.min(hrs, thresh-priorHrs));           // regular hours in THIS shift
+  const ot1Hrs=Math.max(0,Math.min(hrs-Math.max(0,thresh-priorHrs), 2-Math.max(0,2-(Math.max(0,priorHrs-thresh))))); // 125% hours
+  const ot2Hrs=Math.max(0,hrs-regHrs-ot1Hrs);                        // 150% hours
+  const base=regHrs*BASE_RATE + ot1Hrs*BASE_RATE*1.25 + ot2Hrs*BASE_RATE*1.5;
+  const tips=parseFloat(sh.myTipCash)||0;
+  return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),tips,
+    breakdown:{base:+base.toFixed(2),ot1:+(ot1Hrs*BASE_RATE*1.25).toFixed(2),ot2:+(ot2Hrs*BASE_RATE*1.5).toFixed(2),
+      reg:+regHrs.toFixed(2),otHrs1:+ot1Hrs.toFixed(2),otHrs2:+ot2Hrs.toFixed(2),threshold:thresh,isNight:night,isPremium:false}};
+}
+
+function calcPay(sh){ return calcShiftPay(sh, sh.priorDayHrs||0); }
+// Returns the effective base hourly rate for a shift (44 normal, 66 Shabbat, 88 Holiday)
+function shiftBaseRate(sh){
+  if(sh.shiftType==="Holiday") return HOLIDAY_R;
+  if(sh.shiftType==="Shabbat") return SHABBAT_R;
+  const hol=getHoliday(sh.date);
+  if(hol) return hol[1]===200?HOLIDAY_R:SHABBAT_R;
+  return BASE_RATE;
+}
+
+// Detect if a shift spans the 18:00 morning/evening tip pool boundary
+function isSpanShift(sh){
+  const s=parseT(sh.startTime), e=parseT(sh.endTime);
+  if(!s||!e) return false;
+  const startMin=toMin(s), endMin=toMin(e)+(sh.crossesMidnight?1440:0);
+  return startMin<18*60 && endMin>18*60;
+}
+
+// Split hours at 18:00 boundary for tip calculation
+function spanHourSplit(sh){
+  const s=parseT(sh.startTime), e=parseT(sh.endTime);
+  if(!s||!e) return null;
+  const startMin=toMin(s), endMin=toMin(e)+(sh.crossesMidnight?1440:0);
+  const boundary=18*60;
+  const morningHrs=Math.max(0,(Math.min(endMin,boundary)-startMin))/60;
+  const eveningHrs=Math.max(0,endMin-Math.max(startMin,boundary))/60;
+  return{morningHrs:+morningHrs.toFixed(2), eveningHrs:+eveningHrs.toFixed(2)};
+}
+
+function isResolved(sh){ const tipsEntered=sh.myTipCash!==undefined&&sh.myTipCash!==null&&sh.myTipCash!==""; return !!(sh.endTime&&tipsEntered&&(sh.tipsCollected||sh.tipsPending||sh.myTipCash==="0")); }
+function weekKeyForDate(ds){
+  // Use local date to avoid timezone shifts on mobile
+  const d=new Date(ds);
+  while(d.getDay()!==0) d.setDate(d.getDate()-1);
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function getISOWeek(d){ const dt=new Date(d);dt.setHours(0,0,0,0);dt.setDate(dt.getDate()+3-(dt.getDay()+6)%7);const w1=new Date(dt.getFullYear(),0,4);return 1+Math.round(((dt-w1)/86400000-3+(w1.getDay()+6)%7)/7); }
+
+function buildWeekGrid(year){
+  const weeks=[];let d=new Date(year,0,1);
+  while(d.getDay()!==0)d.setDate(d.getDate()-1);
+  while(true){ const s=new Date(d),e=new Date(d);e.setDate(e.getDate()+6); if(s.getFullYear()>year)break; weeks.push({key:(()=>{const y=s.getFullYear(),m=String(s.getMonth()+1).padStart(2,"0"),d=String(s.getDate()).padStart(2,"0");return `${y}-${m}-${d}`;})(),start:s,end:e,weekNum:getISOWeek(s)}); d.setDate(d.getDate()+7); }
+  return weeks.filter(w=>w.start.getFullYear()===year||w.end.getFullYear()===year);
+}
+
+// ── Notifications ─────────────────────────────────────────
+function getNotifs(shifts,dismissed){
+  const now=todayD(),out=[];
+  shifts.filter(s=>!s.endTime&&!s.resolved).forEach(sh=>{
+    const d=daysBetween(new Date(sh.date),now);if(d<0)return;
+    const key=`closing_${sh.id}_${now.toISOString().slice(0,10)}`;
+    if(!dismissed.includes(key)){
+      const msg=d===0?"Shift today has no end time — fill in when you clock out.":
+                d===1?"Yesterday's shift has no end time recorded.":
+                `${d} days ago — shift still missing end time.`;
+      out.push({key,shiftId:sh.id,type:"closing",title:`Missing end time — ${fmtDate(sh.date)}`,body:msg,color:"#F87171",icon:"🔓"});
+    }
+  });
+  shifts.filter(s=>{
+    const todayStr=new Date().toLocaleDateString("en-CA");
+    const[y,m,d]=s.date.split("-").map(Number);
+    const shiftLocal=new Date(y,m-1,d);
+    const todayLocal=new Date(new Date().toLocaleDateString("en-CA"));
+    const diff=Math.round((shiftLocal-todayLocal)/86400000);
+    return diff>=0&&diff<=1&&shiftStatus(s)==="future";
+  }).forEach(sh=>{
+    const todayStr=new Date().toLocaleDateString("en-CA");
+    const isToday=sh.date===todayStr;
+    const key=`future_${sh.id}_${now.toISOString().slice(0,10)}`;
+    if(!dismissed.includes(key)){
+      const timeStr=sh.startTime?sh.startTime+(sh.endTime?" → "+sh.endTime:" → open end"):"time TBD";
+      const body=isToday?`Shift starts at ${timeStr}. Remember to enter tips after.`
+                        :`${timeStr}. Starts tomorrow — remember to note your tips.`;
+      out.push({key,shiftId:sh.id,type:"future",title:`${isToday?"Today":"Tomorrow"}: ${sh.shiftType} shift — ${fmtDate(sh.date)}`,body,color:"#FBBF24",icon:"◷"});
+    }
+  });
+  shifts.filter(s=>shiftStatus(s)==="confirmed"&&s.tipsPending&&!s.tipsCollected).forEach(sh=>{
+    const key=`pending_${sh.id}_${now.toISOString().slice(0,10)}`;
+    if(!dismissed.includes(key))out.push({key,shiftId:sh.id,type:"pending",title:`Pending tip cash — ${fmtDate(sh.date)}`,body:`₪${sh.myTipCash||"?"} not yet collected.`,color:"#A78BFA",icon:"💸"});
+  });
+  // Flagged shifts
+  shifts.filter(s=>s.flagged&&!s.resolved).forEach(sh=>{
+    const key=`flagged_${sh.id}`;
+    if(!dismissed.includes(key))out.push({key,shiftId:sh.id,type:"flagged",title:`Flagged shift — ${fmtDate(sh.date)}`,body:sh.notes||"This shift has been flagged for review.",color:"#F87171",icon:"⚑"});
+  });
+
+  // Pending — only notify AFTER the shift has actually ended
+  const nowMs=Date.now();
+  shifts.filter(s=>shiftStatus(s)==="pending"&&!s.resolved).forEach(sh=>{
+    // Calculate when the shift ends (date + endTime, accounting for midnight crossover)
+    if(sh.endTime){
+      const[y,mo,d]=sh.date.split("-").map(Number);
+      const et=parseT(sh.endTime);
+      const shiftEnd=new Date(y,mo-1,d,et.h,et.m);
+      if(sh.crossesMidnight) shiftEnd.setDate(shiftEnd.getDate()+1);
+      if(shiftEnd.getTime()>nowMs) return; // shift not over yet
+    } else {
+      // No end time — only notify if date is in the past
+      const todayStr=new Date().toLocaleDateString("en-CA");
+      if(sh.date>=todayStr) return;
+    }
+    const key=`pending_tips_${sh.id}`;
+    if(!dismissed.includes(key)){
+      // Build specific message based on what's missing
+      const hasEndTime=!!sh.endTime;
+      const hasClock=sh.clockStatus==="confirmed"||sh.clockStatus==="clocked_in";
+      let body="";
+      // Check span shift partial tips
+      const stH3=parseT(sh.startTime)?.h??0;
+      const etH3=parseT(sh.endTime)?.h??0;
+      const etM3=parseT(sh.endTime)?.m??0;
+      const isSpanN=sh.endTime&&stH3<18&&(sh.crossesMidnight||etH3>18||(etH3===18&&etM3>0));
+      const mEntered=sh.morningTips!==undefined&&sh.morningTips!==null&&sh.morningTips!=="";
+      const eEntered=sh.eveningTips!==undefined&&sh.eveningTips!==null&&sh.eveningTips!=="";
+      if(isSpanN&&!mEntered&&!eEntered) body="Split shift — enter both morning and evening tips.";
+      else if(isSpanN&&!mEntered) body="Split shift — morning tips (till 18:00) still needed.";
+      else if(isSpanN&&!eEntered) body="Split shift — evening tips (18:00+) still needed.";
+      else if(!hasEndTime&&!hasClock) body="No clock-out recorded yet. Enter end time after your shift.";
+      else if(!hasEndTime) body="End time not recorded. Fill in your clock-out time.";
+      else if(!hasClock) body="Clock-out not in schedule yet — enter tips when ready.";
+      else body="Enter your tip cash to finalize this shift.";
+      out.push({key,shiftId:sh.id,type:"pending",
+        title:`Pending — ${fmtDate(sh.date)} (${sh.shiftType})`,
+        body,color:"#FBBF24",icon:"○"});
+    }
+  });
+  return out;
+}
+
+// ── ZIP / XLSX parser ─────────────────────────────────────
+function readZip(u8){
+  const v=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);const files={};let eocd=-1;
+  for(let i=u8.length-22;i>=0;i--){if(u8[i]===0x50&&u8[i+1]===0x4B&&u8[i+2]===0x05&&u8[i+3]===0x06){eocd=i;break;}}
+  if(eocd===-1)return files;
+  const cdOff=v.getUint32(eocd+16,true),cdCnt=v.getUint16(eocd+8,true);let pos=cdOff;
+  for(let i=0;i<cdCnt;i++){
+    if(v.getUint32(pos,true)!==0x02014B50)break;
+    const cm=v.getUint16(pos+10,true),cs=v.getUint32(pos+20,true),fl=v.getUint16(pos+28,true),el=v.getUint16(pos+30,true),cl=v.getUint16(pos+32,true),lo=v.getUint32(pos+42,true);
+    const name=new TextDecoder().decode(u8.slice(pos+46,pos+46+fl));
+    files[name]={cm,cs,lo};pos+=46+fl+el+cl;
+  }
+  for(const name in files){const f=files[name],lh=f.lo,fl2=v.getUint16(lh+26,true),el2=v.getUint16(lh+28,true);f.data=u8.slice(lh+30+fl2+el2,lh+30+fl2+el2+f.cs);}
+  return files;
+}
+async function inflate(data){
+  const ds=new DecompressionStream("deflate-raw"),w=ds.writable.getWriter(),r=ds.readable.getReader();
+  w.write(data);w.close();const chunks=[];
+  while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
+  const out=new Uint8Array(chunks.reduce((s,c)=>s+c.length,0));let off=0;for(const c of chunks){out.set(c,off);off+=c.length;}
+  return out;
+}
+async function getXml(files,name){const f=files[name];if(!f)return null;let b=f.data;if(f.cm===8)b=await inflate(b);return new TextDecoder().decode(b);}
+
+// Extract xlsx internal modification date
+async function getXlsxModifiedDate(files){
+  const coreXml=await getXml(files,"docProps/core.xml");
+  if(!coreXml)return null;
+  const m=coreXml.match(/dcterms:modified[^>]*>([^<]+)</);
+  if(m)return new Date(m[1].trim()).getTime();
+  const c2=coreXml.match(/dcterms:created[^>]*>([^<]+)</);
+  if(c2)return new Date(c2[1].trim()).getTime();
+  return null;
+}
+function countConfirmedClocks(myShifts){
+  return (myShifts||[]).filter(s=>s.clockStatus==="confirmed"||s.clockStatus==="clocked_in").length;
+}
+
+async function parseSchedule(u8){
+  const files=readZip(u8);if(!Object.keys(files).length)throw new Error("Not a valid xlsx file");
+  const ss=[];
+  const ssXml=await getXml(files,"xl/sharedStrings.xml");
+  if(ssXml){
+    // Use regex instead of DOMParser to preserve newlines inside <t> elements
+    // DOMParser collapses whitespace when xml:space="preserve" is absent
+    const siMatches=ssXml.match(/<si>[\s\S]*?<\/si>/g)||[];
+    siMatches.forEach(si=>{
+      const tMatches=si.match(/<t[^>]*>([\s\S]*?)<\/t>/g)||[];
+      const text=tMatches.map(t=>t.replace(/<t[^>]*>/,"").replace(/<\/t>/,"")).join("");
+      ss.push(text);
+    });
+  }
+  // Parse styles to get fill colors by style index
+  const greenRgb="FF5CB85C", orangeRgb="FFED9C28"; // clock-in colors
+  const fillColors={}; // styleIndex -> rgb
+  const stylesXml=await getXml(files,"xl/styles.xml");
+  if(stylesXml){
+    const styDoc=new DOMParser().parseFromString(stylesXml,"text/xml");
+    // Build fills array
+    const fills=[];
+    styDoc.querySelectorAll("fills>fill>patternFill>fgColor").forEach((fg,i)=>{
+      fills.push(fg.getAttribute("rgb")||fg.getAttribute("theme")||"");
+    });
+    // Map xf (cell format) index to fill index
+    styDoc.querySelectorAll("cellXfs>xf").forEach((xf,i)=>{
+      const fillId=parseInt(xf.getAttribute("fillId")||"0");
+      fillColors[i]=fills[fillId]||"";
+    });
+  }
+  function isClockedColor(styleIdx){
+    const rgb=(fillColors[parseInt(styleIdx)||0]||"").toUpperCase();
+    return rgb==="FF5CB85C"  // green = clocked in (normal)
+        || rgb==="FFF0AD4E"  // orange = clocked out after hours
+        || rgb==="5CB85C"
+        || rgb==="F0AD4E";
+  }
+
+  const relsXml=await getXml(files,"xl/_rels/workbook.xml.rels"),wbXml=await getXml(files,"xl/workbook.xml");
+  let sheetPath="xl/worksheets/sheet1.xml";
+  if(relsXml&&wbXml){
+    const sid=new DOMParser().parseFromString(wbXml,"text/xml").querySelector("sheet")?.getAttribute("r:id");
+    if(sid)new DOMParser().parseFromString(relsXml,"text/xml").querySelectorAll("Relationship").forEach(r=>{if(r.getAttribute("Id")===sid){const t=r.getAttribute("Target").replace(/^\.\//,"");sheetPath=t.startsWith("xl/")?t:"xl/"+t;}});
+  }
+  const wsXml=await getXml(files,sheetPath);if(!wsXml)throw new Error("Could not read worksheet");
+  const rowMap={};
+  new DOMParser().parseFromString(wsXml,"text/xml").querySelectorAll("row").forEach(rowEl=>{
+    const ri=parseInt(rowEl.getAttribute("r"))-1;const cells={};
+    rowEl.querySelectorAll("c").forEach(c=>{
+      const ref=c.getAttribute("r"),ci=ref.replace(/[0-9]/g,"").split("").reduce((a,ch)=>a*26+(ch.charCodeAt(0)-64),0)-1;
+      const t=c.getAttribute("t"),v=c.querySelector("v")?.textContent||"";
+      // Resolve cell value
+      // IMPORTANT: Some xlsx exports omit t="s" on shared string cells
+      // Strategy: if t is missing/empty AND value is a valid integer, ALWAYS try ss lookup first
+      let cellVal;
+      const tVal = t||""; // normalize null/undefined to ""
+      if(tVal==="s"){
+        cellVal=ss[parseInt(v)]||"";
+      } else if(tVal==="inlineStr"){
+        cellVal=(c.querySelector("t")||{textContent:""}).textContent||"";
+      } else if(tVal===""&&v!==""&&/^\d+$/.test(v.trim())){
+        // No type + numeric value = very likely a shared string index
+        const idx=parseInt(v);
+        cellVal=(idx>=0&&idx<ss.length)?ss[idx]:v;
+      } else {
+        cellVal=v;
+      }
+      cells[ci]=cellVal;
+      cells["_s_"+ci]=c.getAttribute("s")||"";
+    });
+    rowMap[ri]=cells;
+  });
+  const maxRow=Math.max(...Object.keys(rowMap).map(Number));const rows=[];
+  for(let r=0;r<=maxRow;r++){const cells=rowMap[r]||{};const mc=Object.keys(cells).filter(k=>!k.startsWith("_")).length?Math.max(...Object.keys(cells).filter(k=>!k.startsWith("_")).map(Number).filter(n=>!isNaN(n))):-1;const arr=[];for(let c=0;c<=Math.max(mc,20);c++)arr.push(cells[c]||"");rows.push(arr);}
+  let hRow=-1,dateCols=[];
+  // Try multiple date formats across first 15 rows
+  for(let r=0;r<Math.min(15,rows.length);r++){
+    const mc=[];
+    rows[r].forEach((c,i)=>{
+      // Normalize: replace newlines/tabs so multiline cells like "א'\n12/04/2026" still match
+      const s=String(c).replace(/[\r\n\t]+/g," ");
+      let m=null,date=null;
+      // DD/MM/YYYY or D/MM/YYYY
+      m=s.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+      if(m) date=`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+      // YYYY-MM-DD
+      if(!date){m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)date=m[0];}
+      // Excel serial date number (days since 1899-12-30)
+      if(!date&&!isNaN(s.trim())&&s.trim()!==""){
+        const n=parseInt(s.trim());
+        if(n>40000&&n<60000){
+          const d=new Date((n-25569)*86400000);
+          if(!isNaN(d.getTime())) date=d.toISOString().slice(0,10);
+        }
+      }
+      if(date) mc.push({col:i,date});
+    });
+    if(mc.length>=5){hRow=r;dateCols=mc;break;}
+    // Also accept 4+ dates if that's all the week has
+    if(mc.length>=4&&r>0){hRow=r;dateCols=mc;break;}
+  }
+  if(hRow===-1){
+    // Last resort: look for any row with 4+ time-like values (HH:MM) as date fallback
+    throw new Error(`Could not find date header row. File has ${rows.length} rows. First row: ${rows[0]?.slice(0,5).join(" | ")}`);
+  }
+  const dates=dateCols.map(d=>d.date).sort(),weekStart=dates[0],weekEnd=dates[dates.length-1],weekKey=weekStart;
+  const nameParts=MY_NAME.trim().toLowerCase().split(" ").filter(p=>p.length>1);
+  const allWorkers={},myShifts=[];
+  for(let r=hRow+1;r<rows.length;r++){
+    const row=rows[r];
+    for(const{col,date}of dateCols){
+      const cell=String(row[col]||"").trim();if(!cell||cell.match(/^\d/)||cell.length<2)continue;
+      const nxt=rows[r+1]||[];
+      const startTime=parseT(row[col+1])||parseT(nxt[col+1]),endTime=parseT(row[col])||parseT(nxt[col]);
+      const st=startTime||endTime,et=startTime?endTime:null,cross=st&&et&&toMin(et)<toMin(st);
+      const hrs=st&&et?(()=>{let d=toMin(et)-toMin(st);if(cross||d<0)d+=1440;return +(d/60).toFixed(2);})():null;
+      const dow=new Date(date).getDay();
+      const hol=getHoliday(date);
+      const erevDay=hol&&hol[0].startsWith("Erev");
+      // Erev: shiftType determined at render time based on start hour (erevQualifies in calcShiftPay)
+      const shiftType=hol&&hol[1]===200&&!erevDay?"Holiday":hol&&hol[1]===150&&!erevDay?"Shabbat":dow===6?"Shabbat":"Normal";
+      // Note: erev shifts get shiftType "Normal" and rely on calcShiftPay's erev check
+      // Detect clock status from cell colors
+      // col+1 = start time cell, col = end time cell
+      const startStyleIdx = row["_s_"+(col+1)] || (nxt["_s_"+(col+1)]);
+      const endStyleIdx   = row["_s_"+col]   || (nxt["_s_"+col]);
+      const startClocked  = isClockedColor(startStyleIdx);
+      const endClocked    = isClockedColor(endStyleIdx);
+      // clockStatus: "confirmed"=both clocked, "clocked_in"=only start, "scheduled"=neither
+      const clockStatus = startClocked&&endClocked?"confirmed":startClocked?"clocked_in":"scheduled";
+      const entry={id:`${date}_${fmtT(st)}_${Math.random().toString(36).slice(2,6)}`,date,shiftType,startTime:fmtT(st),endTime:fmtT(et),crossesMidnight:!!cross,rawName:cell,hrs,isEvening:!!(st&&st.h>=16),isMorning:!!(st&&st.h<16),isClosing:!et,dayOfWeek:dow,clockStatus,totalShiftHrs:"",tipPool:"",myTipCash:"",breakHrs:0,notes:"",gcalEventId:null,tipsCollected:false,tipsPending:false,flagged:false,resolved:false};
+      if(!allWorkers[cell.trim()])allWorkers[cell.trim()]=[];
+      allWorkers[cell.trim()].push({date,startTime:fmtT(st),endTime:fmtT(et),hrs,shiftType});
+      if(nameParts.some(p=>cell.toLowerCase().includes(p)))myShifts.push(entry);
+    }
+  }
+  const rosterSummary=Object.entries(allWorkers).map(([name,shifts])=>({name,shifts:shifts.length,totalHrs:shifts.reduce((s,sh)=>s+(sh.hrs||0),0)})).sort((a,b)=>b.totalHrs-a.totalHrs);
+
+  // Detect double shifts: same date, multiple entries → mark with priorDayHrs for OT continuity
+  const byDate={};
+  myShifts.forEach(sh=>{ if(!byDate[sh.date])byDate[sh.date]=[]; byDate[sh.date].push(sh); });
+  const processedShifts=myShifts.map(sh=>{
+    const dayShifts=byDate[sh.date];
+    if(dayShifts.length<2) return sh;
+    // Sort by start time to find earlier shift
+    dayShifts.sort((a,b)=>(toMin(parseT(a.startTime))||0)-(toMin(parseT(b.startTime))||0));
+    const idx=dayShifts.findIndex(s=>s.id===sh.id);
+    const priorHrs=dayShifts.slice(0,idx).reduce((sum,s)=>sum+(shiftHrs(parseT(s.startTime),parseT(s.endTime),s.crossesMidnight)||0),0);
+    return{...sh, priorDayHrs:+priorHrs.toFixed(2), isDoubleShift:true, doubleShiftIdx:idx, doubleShiftTotal:dayShifts.length};
+  });
+
+  const fileModifiedDate=await getXlsxModifiedDate(files);
+  return{weekKey,weekStart,weekEnd,myShifts:processedShifts,rosterSummary,workerCount:Object.keys(allWorkers).length,fileModifiedDate};
+}
+
+// ── Google Calendar ───────────────────────────────────────
+async function gcReq(token,method,path,body){
+  const url=`${CAL_API}${path}`;
+  const opts={method,headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"}};
+  if(body) opts.body=JSON.stringify(body);
+  let r;
+  try{ r=await fetch(url,opts); }
+  catch(netErr){ throw new Error(`Network error: ${netErr.message}`); }
+  if(!r.ok){
+    let errMsg=`HTTP ${r.status}`;
+    try{ const e=await r.json(); errMsg=e?.error?.message||e?.error?.status||errMsg; }catch{}
+    throw new Error(`${errMsg} (${method} ${path.slice(0,40)})`);
+  }
+  if(method==="DELETE") return null;
+  return r.json();
+}
+function shiftGCalId(sh){
+  return "shift"+sh.id.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,60);
+}
+function toGCal(sh){
+  if(!sh.date)return null;
+  const st=parseT(sh.startTime)||{h:18,m:0};
+  const parts=sh.date.split("-").map(Number);
+  if(parts.length<3)return null;
+  const[yr,mo,dy]=parts;
+  const sD=new Date(yr,mo-1,dy,st.h,st.m);let eD;
+  if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(yr,mo-1,dy,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
+  else eD=new Date(sD.getTime()+6*3600000);
+  const pay=calcPay(sh),status=shiftStatus(sh);
+  const hol=getHoliday(sh.date);
+  const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:"[Shift]";
+  const desc=[`${typeStr} ${sh.shiftType}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
+  const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":"5";
+  return{id:shiftGCalId(sh),summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+}
+function paycheckEv(yr,mo){
+  const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
+  return{summary:`💰 Paycheck — ${mn} ${yr}`,description:`Expected paycheck for ${mn} ${yr}. Verify against Shift Tracker.`,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId:"10",reminders:{useDefault:false,overrides:[{method:"popup",minutes:0},{method:"email",minutes:0}]}};
+}
+
+// ── Storage helpers ───────────────────────────────────────
+function u8ToB64(u8){let bin="";const chunk=8192;for(let i=0;i<u8.length;i+=chunk)bin+=String.fromCharCode(...u8.subarray(i,i+chunk));return btoa(bin);}
+function b64ToU8(b64){const bin=atob(b64);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8;}
+
+// ── Palette ───────────────────────────────────────────────
+const C={bg:"#0C0F18",surface:"#131720",card:"#181E2C",border:"#1F2B40",acc:"#4F8EF7",green:"#22C55E",yellow:"#FBBF24",red:"#F87171",purple:"#A78BFA",text:"#EEF2FF",muted:"#5C6B8A",dim:"#232D42"};
+const mono="'IBM Plex Mono','Courier New',monospace";
+const sans="'DM Sans',sans-serif";
+const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function Bar({value,max,color,height=6}){return(<div style={{background:C.dim,borderRadius:3,height,overflow:"hidden",flex:1}}><div style={{background:color,height:"100%",width:`${max>0?(value/max)*100:0}%`,borderRadius:3,transition:"width .4s"}}/></div>);}
+
+// ── App ───────────────────────────────────────────────────
+function DoubleTipField({sh,hrs,partnerTips,partnerOk,partnerName,updFn,inpFn,colors,fontMono}){
+  const isMorn=sh.doubleShiftIdx===0;
+  const label=isMorn?"☀ Morning shift":"🌙 Evening shift";
+  const col=isMorn?colors.yellow:colors.acc;
+  const tips=parseFloat(sh.myTipCash||"");
+  const hourly=(hrs>0&&!isNaN(tips)&&sh.myTipCash!==""&&sh.myTipCash!==undefined)?(tips/hrs).toFixed(2):null;
+  const partnerTipsNum=parseFloat(partnerTips||"");
+  const totalTips=(!isNaN(tips)&&sh.myTipCash!=="")?tips:null;
+  const bothKnown=totalTips!==null&&!isNaN(partnerTipsNum)&&partnerTips!==""&&partnerTips!==undefined;
+  const grandTotal=bothKnown?(totalTips+partnerTipsNum).toFixed(0):null;
+  return(
+    <div style={{gridColumn:"1 / -1",background:col+"10",border:"1px solid "+col+"30",borderRadius:8,padding:"10px 11px",marginBottom:4}}>
+      <div style={{fontSize:10,color:col,fontWeight:700,marginBottom:8}}>{label} — {hrs.toFixed(1)}h</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isMorn?"☀":"🌙"} Tips ₪ cash</label>
+          <input key={"t"+sh.id} style={inpFn()} placeholder="0" defaultValue={sh.myTipCash||""}
+            onBlur={e=>{const v=parseFloat(e.target.value.trim());updFn(sh.id,{myTipCash:isNaN(v)?"":v+""});}}/>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isMorn?"☀":"🌙"} ₪/h tip rate</label>
+          <input key={"h"+sh.id} style={inpFn()} placeholder="0"
+            defaultValue={hourly||""}
+            onBlur={e=>{const r=parseFloat(e.target.value.trim());if(!isNaN(r)&&hrs>0){const br=shiftBaseRate(sh);const tipRate=r>br?r-br:r;updFn(sh.id,{myTipCash:(tipRate*hrs).toFixed(2)+""}); }}}/>
+          {hourly&&<span style={{fontSize:8,color:colors.muted}}>= ₪{isNaN(tips)?0:tips.toFixed(0)} total</span>}
+        </div>
+      </div>
+      {bothKnown&&(
+        <div style={{marginTop:8,padding:"6px 8px",background:colors.purple+"15",border:"1px solid "+colors.purple+"30",borderRadius:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:10,color:colors.purple,fontWeight:700}}>Day total: ₪{grandTotal}</span>
+          <span style={{fontSize:9,color:colors.muted}}>{isMorn?"☀":"🌙"}₪{totalTips?.toFixed(0)} + {isMorn?"🌙":"☀"}₪{partnerTipsNum.toFixed(0)}</span>
+        </div>
+      )}
+      {!partnerOk&&<div style={{fontSize:9,color:colors.yellow,marginTop:5}}>⚠ {partnerName} tips still needed</div>}
+    </div>
+  );
+}
+
+// ── Google Drive persistence helpers ──────────────────────────────────────
+async function driveFind(token, name){
+  const q=encodeURIComponent(`name='${name}' and trashed=false`);
+  const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name,modifiedTime)`,
+    {headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok) return null;
+  const d=await r.json();
+  return d.files?.[0]||null;
+}
+
+async function driveRead(token, fileId){
+  const r=await fetch(`${DRIVE_API}/files/${fileId}?alt=media`,
+    {headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok) return null;
+  return r.json();
+}
+
+async function driveWrite(token, fileId, data){
+  const body=JSON.stringify(data);
+  const url=fileId
+    ? `${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`
+    : `${DRIVE_UPLOAD}/files?uploadType=multipart`;
+  if(fileId){
+    // Update existing file
+    const r=await fetch(url,{method:"PATCH",
+      headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+      body});
+    return r.ok?await r.json():null;
+  } else {
+    // Create new file with metadata
+    const meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
+    const boundary="shifts_tracker_boundary";
+    const multipart=[
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",meta,"",
+      `--${boundary}`,
+      "Content-Type: application/json",
+      "",body,
+      `--${boundary}--`
+    ].join("\r\n");
+    const r=await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart`,{
+      method:"POST",
+      headers:{Authorization:`Bearer ${token}`,
+        "Content-Type":`multipart/related; boundary=${boundary}`},
+      body:multipart});
+    return r.ok?await r.json():null;
+  }
+}
+
+function App(){
+  // Tracker state
+  const [shifts,    setShifts]    = useState([]);
+  const [dismissed, setDismissed] = useState([]);
+  const [token,     setToken]     = useState(null);
+  const [email,     setEmail]     = useState(null);
+  const [calendarId,setCalendarId]= useState("primary");
+  const [calendars, setCalendars] = useState([]);
+  const [gcMsg,     setGcMsg]     = useState(null);
+  const [syncing,   setSyncing]   = useState(false);
+  const [shiftFilter,setShiftFilter]=useState("shifts");
+  const [impMsg,    setImpMsg]    = useState(null);
+
+  const [pasteUrl,  setPasteUrl]  = useState("");
+  const [pasteErr,  setPasteErr]  = useState("");
+  const [copied,    setCopied]    = useState(false);
+  const [authToast,  setAuthToast]  = useState(null); // {ok, text}
+  // Archive state
+  const [archiveIndex,setArchiveIndex]=useState([]);
+  const [weekData,    setWeekData]    =useState({});
+  const [selWeek,     setSelWeek]     =useState(null);
+  const [archiveView, setArchiveView] =useState("timeline"); // timeline | detail
+  const [archiveMsg,  setArchiveMsg]  =useState(null);
+  const [importing,   setImporting]   =useState(false);
+  const importTimeoutRef=useRef(null);
+  function safeSetImporting(val){
+    if(val){
+      clearTimeout(importTimeoutRef.current);
+      importTimeoutRef.current=setTimeout(()=>{
+        setImporting(false);
+        setArchiveMsg({ok:false,text:"Import timed out — please try again"});
+      },30000);
+    } else {
+      clearTimeout(importTimeoutRef.current);
+    }
+    setImporting(val);
+  }
+  // Main nav
+  const [mainTab,   setMainTab]   = useState("tracker"); // tracker | archive | patterns
+  const calIdRef = useRef("primary");
+  const driveFileIdRef = useRef(null);
+  const driveSaveTimerRef = useRef(null);
+  const [driveStatus, setDriveStatus] = useState("idle"); // idle | loading | saving | saved | error
+  const [driveError, setDriveError] = useState(null);
+  const weeks=buildWeekGrid(YEAR);
+
+  // ── Load storage ──
+  // Listen for token broadcast from Google redirect tab
+  useEffect(()=>{
+    let bc;
+    try{
+      bc=new BroadcastChannel("shift_tracker_auth");
+      bc.onmessage=(e)=>{
+        if(e.data?.type==="auth_token"&&e.data?.token){
+          connectToken(e.data.token, e.data.expiry||Date.now()+3500000);
+          
+          setGcMsg({ok:true,text:"✓ Google Calendar connected!"});
+        }
+      };
+    }catch{}
+    return()=>{ try{bc?.close();}catch{} };
+  },[]);
+
+  useEffect(()=>{
+    (async()=>{
+      try{const r=await window.storage.get(SHIFTS_KEY);if(r)setShifts(JSON.parse(r.value));}catch{}
+      try{const r=await window.storage.get(NOTIF_KEY);if(r)setDismissed(JSON.parse(r.value));}catch{}
+      try{const r=await window.storage.get(TOKEN_KEY);if(r){const sv=JSON.parse(r.value);if(sv.expiry>Date.now()){setToken(sv.token);setEmail(sv.email);if(sv.calendarId){setCalendarId(sv.calendarId);calIdRef.current=sv.calendarId;}fetchCalendars(sv.token);
+          // Restore from Drive — overrides local storage if Drive has data
+          const driveLoaded=await loadFromDrive(sv.token);
+          if(!driveLoaded){
+            // Fall back to local storage
+            try{const sr=await window.storage.get(SHIFTS_KEY);if(sr)setShifts(JSON.parse(sr.value));}catch{}
+          }}}}catch{}
+      try{
+        const r=await window.storage.get(ARCHIVE_KEY);if(!r)return;
+        const index=JSON.parse(r.value);setArchiveIndex(index);
+        const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
+        setWeekData(data);
+      }catch{}
+    })();
+    // Check URL hash for token (handles redirect back to this page)
+    const fullUrl=window.location.href;
+    if(fullUrl.includes("access_token")){
+      const hashPart=fullUrl.split("#")[1]||"";
+      const p=new URLSearchParams(hashPart);
+      const t=p.get("access_token");
+      if(t){
+        const exp=Date.now()+(parseInt(p.get("expires_in")||"3600")*1000);
+        window.location.hash="";
+        connectToken(t,exp);
+      }
+    }
+  },[]);
+
+  // ── Auto-reconcile: sync resolved tracker shifts back to archive ──
+  useEffect(()=>{
+    if(!shifts.length||!archiveIndex.length)return;
+    (async()=>{
+      const resolved=shifts.filter(isResolved);if(!resolved.length)return;
+      let anyUpdated=false;
+      const newWeekData={...weekData};
+      for(const sh of resolved){
+        const wKey=weekKeyForDate(sh.date);
+        if(!archiveIndex.includes(wKey))continue;
+        const wData=newWeekData[wKey];if(!wData)continue;
+        const idx=wData.myShifts?.findIndex(s=>s.id===sh.id||( s.date===sh.date&&s.startTime===sh.startTime));
+        if(idx===-1||idx===undefined)continue;
+        const archived=wData.myShifts[idx];
+        const changed=archived.endTime!==sh.endTime||archived.tipPool!==sh.tipPool||archived.myTipCash!==sh.myTipCash;
+        if(!changed)continue;
+        const updated={...archived,...sh,reconciled:true};
+        newWeekData[wKey]={...wData,myShifts:wData.myShifts.map((s,i)=>i===idx?updated:s),reconciled:wData.myShifts.every((s,i)=>i===idx?true:(isResolved(s)||s.shiftType==="future")),lastReconciled:new Date().toISOString()};
+        await window.storage.set(WEEK_PFX+wKey,JSON.stringify(newWeekData[wKey])).catch(()=>{});
+        anyUpdated=true;
+      }
+      if(anyUpdated)setWeekData(newWeekData);
+    })();
+  },[shifts,archiveIndex]);
+
+  function fetchCalendars(t){fetch(`${CAL_API}/users/me/calendarList`,{headers:{Authorization:`Bearer ${t}`}}).then(r=>r.json()).then(d=>{if(d.items)setCalendars(d.items.map(c=>({id:c.id,name:c.summary,primary:!!c.primary})));}).catch(()=>{});}
+
+  function connectToken(t,exp){
+    setToken(t);
+    
+    fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:`Bearer ${t}`}})
+      .then(r=>r.json()).then(d=>{
+        setEmail(d.email);
+        setAuthToast({ok:true, text:`✓ Connected as ${d.email}`});
+        setTimeout(()=>setAuthToast(null), 4000);
+        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email:d.email,calendarId:calIdRef.current})).catch(()=>{});
+        // Load persisted data from Google Drive
+        loadFromDrive(t);
+      }).catch(()=>{
+        setAuthToast({ok:true, text:"✓ Google Calendar connected!"});
+        setTimeout(()=>setAuthToast(null), 4000);
+        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email:null,calendarId:calIdRef.current})).catch(()=>{});
+      });
+    fetchCalendars(t);
+  }
+
+  function buildAuthUrl(){const p=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:"https://claude.ai",response_type:"token",scope:SCOPES,prompt:"consent"});return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;}
+  function signIn(){
+    const url=buildAuthUrl();
+    // Try opening in new tab — on mobile Claude app may intercept
+    // Also show the URL in paste panel so user can copy manually
+    try{ window.open(url,'_blank'); }catch{}
+    setShowPaste(true);
+    setPasteUrl("");
+    setPasteErr("");
+    setAuthSignInUrl(url);
+  }
+  function signOut(){setToken(null);setEmail(null);setCalendars([]);driveFileIdRef.current=null;setDriveStatus("idle");window.storage.delete(TOKEN_KEY).catch(()=>{});}
+
+  async function loadFromDrive(token){
+    setDriveStatus("loading");
+    try{
+      const file=await driveFind(token, DRIVE_FILE_NAME);
+      if(!file){setDriveStatus("idle");return false;}
+      driveFileIdRef.current=file.id;
+      const data=await driveRead(token, file.id);
+      if(!data){setDriveStatus("error");setDriveError("Could not read Drive file");return false;}
+      // Restore all state from Drive
+      if(data.shifts) setShifts(data.shifts);
+      if(data.dismissed) setDismissed(data.dismissed);
+      if(data.archiveIndex){
+        setArchiveIndex(data.archiveIndex);
+        if(data.weekData) setWeekData(data.weekData);
+      }
+      setDriveStatus("saved");
+      setDriveError(null);
+      return true;
+    }catch(e){
+      setDriveStatus("error");
+      setDriveError(e.message);
+      return false;
+    }
+  }
+
+  async function saveToDrive(token, shiftsData, dismissedData, archiveIndexData, weekDataData){
+    if(!token||!driveStatus) return;
+    // Debounce: wait 2s after last change before saving
+    clearTimeout(driveSaveTimerRef.current);
+    driveSaveTimerRef.current=setTimeout(async()=>{
+      setDriveStatus("saving");
+      try{
+        const payload={
+          shifts: shiftsData,
+          dismissed: dismissedData,
+          archiveIndex: archiveIndexData,
+          weekData: weekDataData,
+          savedAt: new Date().toISOString(),
+          version: "v69",
+        };
+        const result=await driveWrite(token, driveFileIdRef.current, payload);
+        if(result){
+          if(!driveFileIdRef.current) driveFileIdRef.current=result.id;
+          setDriveStatus("saved");
+        } else {
+          setDriveStatus("error");
+          setDriveError("Save failed");
+        }
+      }catch(e){
+        setDriveStatus("error");
+        setDriveError(e.message);
+      }
+    }, 2000);
+  }
+  function testToken(){
+    setGcMsg(null);
+    fetch(`${CAL_API}/users/me/calendarList`,{headers:{Authorization:`Bearer ${token}`}})
+      .then(r=>r.json().then(d=>({ok:r.ok,status:r.status,d})))
+      .then(({ok,status,d})=>{
+        if(ok) setGcMsg({ok:true,text:`✓ Token valid. Calendars: ${d.items?.map(c=>c.summary).join(", ")||"none"}`});
+        else setGcMsg({ok:false,text:`Token test failed: ${d?.error?.message||"HTTP "+status}`});
+      })
+      .catch(e=>setGcMsg({ok:false,text:`Connection error: ${e.message}`}));
+  }
+
+  const [resetStep, setResetStep] = useState(0);
+  const [showPaste, setShowPaste] = useState(false);
+  const [authSignInUrl, setAuthSignInUrl] = useState(null);
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [showAllNotifs, setShowAllNotifs] = useState(false);
+  const [weekSyncing, setWeekSyncing] = useState(false);
+  const [weekSyncMsg, setWeekSyncMsg] = useState(null);
+  const [showIcsPanel, setShowIcsPanel] = useState(false);
+  const [icsContent, setIcsContent] = useState("");
+  const [icsCopied, setIcsCopied] = useState(false); // 0=hidden, 1=confirm1, 2=confirm2
+
+  async function doReset(){
+    const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY];
+    for(const k of keys) await window.storage.delete(k).catch(()=>{});
+    for(const key of archiveIndex){
+      await window.storage.delete(FILE_PFX+key).catch(()=>{});
+      await window.storage.delete(WEEK_PFX+key).catch(()=>{});
+    }
+    setShifts([]);setDismissed([]);setToken(null);setEmail(null);
+    setCalendars([]);setCalendarId("primary");setGcMsg(null);
+    setArchiveIndex([]);setWeekData({});setSelWeek(null);
+    setArchiveView("timeline");setMainTab("tracker");
+    setImpMsg(null);setArchiveMsg(null);setResetStep(0);
+    setImporting(false);setSyncing(false);
+  }
+  function copyLink(){navigator.clipboard?.writeText(buildAuthUrl()).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}).catch(()=>{});setShowAuth(true);}
+  function extractToken(raw){
+    setPasteErr("");
+    try{const p=new URLSearchParams(raw.includes("#")?raw.split("#")[1]:raw.replace(/^[?#]/,""));const t=p.get("access_token");if(!t){setPasteErr("No access_token found");return;}const exp=Date.now()+(parseInt(p.get("expires_in")||"3600")*1000);connectToken(t,exp);setPasteUrl("");}
+    catch(e){setPasteErr("Could not parse: "+e.message);}
+  }
+  function changeCalendar(id){setCalendarId(id);calIdRef.current=id;window.storage.get(TOKEN_KEY).then(r=>{if(r){const sv=JSON.parse(r.value);sv.calendarId=id;window.storage.set(TOKEN_KEY,JSON.stringify(sv)).catch(()=>{});}}).catch(()=>{});}
+
+  function dedupeShifts(list){
+    // Remove duplicates: keep the most complete version for each date+approximate_start
+    const seen=new Map();
+    for(const sh of list){
+      const startH=parseT(sh.startTime)?.h??0;
+      const key=`${sh.date}_${startH}`; // group by date + start hour
+      if(!seen.has(key)){seen.set(key,sh);}
+      else{
+        const existing=seen.get(key);
+        // Keep the one with more data: clocked > end time > tips
+        const score=s=>(s.clockStatus==="confirmed"?4:s.clockStatus==="clocked_in"?3:0)+(s.endTime?2:0)+(s.tipPool&&s.tipPool!="0"?1:0)+(s.myTipCash&&s.myTipCash!="0"?1:0);
+        if(score(sh)>score(existing))seen.set(key,{...sh,totalShiftHrs:sh.totalShiftHrs||""});
+        else seen.set(key,{...existing,totalShiftHrs:""});
+      }
+    }
+    return [...seen.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  }
+  const save=useCallback(async s=>{
+    const d=dedupeShifts(s);
+    setShifts(d);
+    try{await window.storage.set(SHIFTS_KEY,JSON.stringify(d));}catch{}
+    // Mirror to Google Drive if connected
+    if(token&&driveFileIdRef.current!==undefined){
+      saveToDrive(token, d, dismissed, archiveIndex, weekData);
+    }
+  },[token, dismissed, archiveIndex, weekData]);
+  const saveDis=useCallback(async d=>{setDismissed(d);try{await window.storage.set(NOTIF_KEY,JSON.stringify(d));}catch{}},[]);
+  const upd=useCallback(async(id,patch)=>{const next=shifts.map(s=>{if(s.id!==id)return s;const u={...s,...patch};if(patch.endTime&&parseT(patch.endTime)){const sm=parseT(s.startTime),em=parseT(patch.endTime);u.crossesMidnight=!!(em&&sm&&toMin(em)<toMin(sm));}return u;});await save(next);},[shifts,save]);
+
+  // ── Archive: upload schedule ──
+  async function onArchiveFile(e){
+    const files=[...(e.target.files||[])];
+    if(!files.length)return;
+    safeSetImporting(true);setArchiveMsg(null);
+    const results=[];
+    let newIndex=[...archiveIndex];
+    let newWeekData={...weekData};
+    let mergedShifts=null;
+    try{
+    for(const file of files){
+      try{
+        const buf=await file.arrayBuffer();const u8=new Uint8Array(buf);
+        const{weekKey,weekStart,weekEnd,myShifts,rosterSummary,workerCount,fileModifiedDate}=await parseSchedule(u8);
+        const isUpdate=newIndex.includes(weekKey);
+        const existingMeta=newWeekData[weekKey];
+        if(isUpdate&&existingMeta){
+          const existingModDate=existingMeta.fileModifiedDate||0;
+          const existingClocks=countConfirmedClocks(existingMeta.myShifts||[]);
+          const newClocks=countConfirmedClocks(myShifts);
+          const incomingIsOlder=fileModifiedDate&&existingModDate&&fileModifiedDate<existingModDate;
+          if(incomingIsOlder&&newClocks<existingClocks){
+            results.push({file:file.name,ok:false,msg:`Skipped — older file (${newClocks} vs ${existingClocks} clocked)`});
+            continue;
+          }
+        }
+        await window.storage.set(FILE_PFX+weekKey,u8ToB64(u8));
+        const meta={weekStart,weekEnd,myShifts,rosterSummary,workerCount,fileModifiedDate,uploadedAt:new Date().toISOString(),fileName:file.name};
+        await window.storage.set(WEEK_PFX+weekKey,JSON.stringify(meta));
+        if(!newIndex.includes(weekKey))newIndex=[...newIndex,weekKey].sort();
+        newWeekData={...newWeekData,[weekKey]:meta};
+        if(mergedShifts===null){try{const r=await window.storage.get(SHIFTS_KEY);if(r)mergedShifts=JSON.parse(r.value);}catch{} if(!mergedShifts)mergedShifts=[];}
+        const weekDates=new Set(myShifts.map(s=>s.date));
+        const keepOutside=mergedShifts.filter(s=>!weekDates.has(s.date));
+        const userTouched=s=>((s.myTipCash!==undefined&&s.myTipCash!==null&&s.myTipCash!=="")||s.tipsCollected||s.tipsPending||s.resolved||(s.flagged===true));
+        const keepResolved=mergedShifts.filter(s=>weekDates.has(s.date)&&userTouched(s));
+        const freshShifts=myShifts.map(newSh=>{
+          const resolvedMatch=keepResolved.find(s=>s.date===newSh.date&&Math.abs((parseT(s.startTime)?.h??0)-(parseT(newSh.startTime)?.h??0))<=1);
+          if(resolvedMatch)return{...resolvedMatch,startTime:newSh.startTime,endTime:newSh.endTime||resolvedMatch.endTime,clockStatus:newSh.clockStatus,crossesMidnight:newSh.crossesMidnight,shiftType:newSh.shiftType,totalShiftHrs:""};
+          return{...newSh,totalShiftHrs:""};
+        });
+        mergedShifts=[...keepOutside,...freshShifts].sort((a,b)=>a.date.localeCompare(b.date));
+        results.push({file:file.name,ok:true,weekKey,weekStart,weekEnd,shifts:myShifts.length,isUpdate});
+      }catch(err){results.push({file:file.name,ok:false,msg:err.message});}
+    }
+    if(mergedShifts!==null)await save(mergedShifts);
+    await window.storage.set(ARCHIVE_KEY,JSON.stringify(newIndex));
+    setArchiveIndex(newIndex);setWeekData(newWeekData);
+    const ok=results.filter(r=>r.ok);
+    const skipped=results.filter(r=>!r.ok);
+    let msg="";
+    if(ok.length===1){const r=ok[0];msg=`✓ Week ${fmtShort(r.weekStart)}–${fmtShort(r.weekEnd)} ${r.isUpdate?"updated":"archived"}. ${r.shifts} shifts.`;}
+    else if(ok.length>1){msg=`✓ ${ok.length} schedules uploaded: ${ok.map(r=>fmtShort(r.weekStart)).join(", ")}`;}
+    if(skipped.length)msg+=(msg?" · ":"")+`${skipped.length} skipped: ${skipped.map(r=>r.file.split(".")[0]+": "+r.msg).join("; ")}`;
+    setArchiveMsg({ok:skipped.length===0,text:msg||"No files processed"});
+    if(ok.length>=1){
+      setSelWeek(ok[0].weekKey);
+      setArchiveView(ok.length===1?"detail":"timeline");
+    } else {
+      setArchiveView("timeline");
+    }
+    setMainTab("archive");
+  }catch(err){
+    setArchiveMsg({ok:false,text:"Upload error: "+err.message});
+  }finally{
+    safeSetImporting(false);
+    try{e.target.value="";}catch{}
+  }
+  }
+  async function downloadFile(key){
+    try{const r=await window.storage.get(FILE_PFX+key);if(!r){alert("File not found");return;}const blob=new Blob([b64ToU8(r.value)],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`schedule_${key}.xlsx`;a.click();}
+    catch(e){alert("Download error: "+e.message);}
+  }
+  async function deleteWeek(key){
+    if(!confirm("Delete this week's archive?"))return;
+    await window.storage.delete(FILE_PFX+key).catch(()=>{});await window.storage.delete(WEEK_PFX+key).catch(()=>{});
+    const ni=archiveIndex.filter(k=>k!==key);await window.storage.set(ARCHIVE_KEY,JSON.stringify(ni));
+    setArchiveIndex(ni);setWeekData(prev=>{const n={...prev};delete n[key];return n;});
+    if(selWeek===key){setSelWeek(null);setArchiveView("timeline");}
+  }
+
+  // ── Google Calendar sync ──
+  function syncWeek(weekShifts){
+    // Google API is blocked in sandboxed iframe — open each shift as a Google Cal event link
+    // User reviews and saves each one in Google Calendar
+    const valid=weekShifts.filter(sh=>sh.date&&sh.startTime);
+    if(!valid.length){setWeekSyncMsg({ok:false,text:"No shifts to sync"});return;}
+    valid.forEach((sh,i)=>{
+      // Stagger opens so browser doesn't block them as popups
+      setTimeout(()=>window.open(buildGCalUrl(sh),"_blank"), i*400);
+    });
+    setWeekSyncMsg({ok:true,text:`Opened ${valid.length} shift${valid.length>1?"s":""} in Google Calendar — tap Save on each one`});
+  }
+
+  function buildGCalUrl(sh){
+    const pay=calcPay(sh);
+    const[y,mo,d]=sh.date.split("-").map(Number);
+    const st=parseT(sh.startTime)||{h:18,m:0};
+    const sD=new Date(y,mo-1,d,st.h,st.m);
+    let eD;
+    if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(y,mo-1,d,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
+    else eD=new Date(sD.getTime()+6*3600000);
+    const pad=n=>String(n).padStart(2,"0");
+    const fmt=dt=>`${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+    const hol=getHoliday(sh.date);
+    const title=encodeURIComponent(`[${sh.shiftType}] Shift${pay?` - ${pay.net} net`:""}`);
+    const details=encodeURIComponent([`Shift: ${sh.shiftType}`,`Hours: ${shiftHrsNum(sh)||"?"}h`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n"));
+    const dates=`${fmt(sD)}/${fmt(eD)}`;
+    return `https://calendar.google.com/calendar/r/eventedit?text=${title}&dates=${dates}&details=${details}&sf=true`;
+  }
+
+  function exportICS(){
+    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Shift Tracker//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH"];
+    shifts.forEach(sh=>{
+      if(!sh.date||!sh.startTime)return;
+      const pay=calcPay(sh);
+      const[y,mo,d]=sh.date.split("-").map(Number);
+      const st=parseT(sh.startTime)||{h:18,m:0};
+      const sD=new Date(y,mo-1,d,st.h,st.m);
+      let eD;
+      if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(y,mo-1,d,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
+      else eD=new Date(sD.getTime()+6*3600000);
+      const fmt=dt=>[dt.getFullYear(),String(dt.getMonth()+1).padStart(2,"0"),String(dt.getDate()).padStart(2,"0"),"T",String(dt.getHours()).padStart(2,"0"),String(dt.getMinutes()).padStart(2,"0"),"00"].join("");
+      const st_=shiftStatus(sh);
+      const summary=`${sh.shiftType} Shift${pay?` — ₪${pay.net} net`:""}`;
+      const desc=["Shift Tracker Export",`Status: ${st_}`,pay?`Pay: ₪${pay.net} net / ₪${pay.gross} gross`:"",pay?.tips?`Tips: ₪${pay.tips}`:"",sh.myTipCash?`My tips: ₪${sh.myTipCash}`:"",getHoliday(sh.date)?`Holiday: ${getHoliday(sh.date)[0]}`:""].filter(Boolean).join("\n");
+      lines.push("BEGIN:VEVENT",`DTSTART:${fmt(sD)}`,`DTEND:${fmt(eD)}`,`SUMMARY:${summary}`,`DESCRIPTION:${desc.split("\n").join("\\n")}`,`UID:shift-${sh.id}@tracker`,`STATUS:${st_==="confirmed"?"CONFIRMED":"TENTATIVE"}`,"END:VEVENT");
+    });
+    // Add Israeli holidays
+    Object.entries(IL_HOLIDAYS).forEach(([date,[name,pct]])=>{
+      const[y,mo,d]=date.split("-").map(Number);
+      const nextDay=new Date(y,mo-1,d+1);
+      const nextStr=[nextDay.getFullYear(),String(nextDay.getMonth()+1).padStart(2,"0"),String(nextDay.getDate()).padStart(2,"0")].join("");
+      lines.push("BEGIN:VEVENT",`DTSTART;VALUE=DATE:${date.replace(/-/g,"")}`,`DTEND;VALUE=DATE:${nextStr}`,`SUMMARY:🎉 ${name} (${pct}% pay)`,`DESCRIPTION:Israeli holiday — pay rate ${pct}%`,`UID:holiday-${date}@tracker`,"END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const icsContent=lines.join("\r\n");
+    // Show ICS content in a copyable panel — download is blocked in sandboxed iframe
+    setIcsContent(icsContent);
+    setShowIcsPanel(true);
+    setGcMsg({ok:true,text:"✓ Calendar data ready — copy it below and save as shifts.ics"});
+  }
+
+    async function syncAll(){
+    if(!token)return;
+    setSyncing(true);setGcMsg(null);
+    let created=0,updated=0,errors=0,lastErr="";
+    try{
+      // Verify token first
+      const testR=await fetch(`${CAL_API}/users/me/calendarList`,{headers:{Authorization:`Bearer ${token}`}});
+      if(!testR.ok){
+        if(testR.status===401||testR.status===403){
+          setGcMsg({ok:false,text:`Token expired (${testR.status}) — sign out and reconnect Google.`});
+          setSyncing(false);return;
+        }
+        throw new Error(`Calendar access failed: HTTP ${testR.status}`);
+      }
+      const next=[...shifts];
+      for(let i=0;i<next.length;i++){
+        const sh=next[i];
+        const ev=toGCal(sh);
+        if(!ev)continue;
+        try{
+          if(sh.gcalEventId){
+            try{
+              await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
+              updated++;
+            }catch(e){
+              if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
+                const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+                next[i]={...sh,gcalEventId:r.id};created++;
+              }else{errors++;lastErr=e.message;}
+            }
+          }else{
+            const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+            next[i]={...sh,gcalEventId:r.id};created++;
+          }
+        }catch(e){errors++;lastErr=e.message;}
+      }
+      // Paycheck reminders (next 3 months only)
+      const now=new Date();
+      for(let m=0;m<3;m++){
+        const d=new Date(now.getFullYear(),now.getMonth()+m,1);
+        const yr=d.getFullYear(),mo=d.getMonth()+1;
+        try{
+          const tMin=new Date(yr,mo-1,8,0,0).toISOString(),tMax=new Date(yr,mo-1,10,23,59).toISOString();
+          const ex=await gcReq(token,"GET",`/calendars/${calIdRef.current}/events?timeMin=${tMin}&timeMax=${tMax}&q=Paycheck&singleEvents=true`);
+          if(!ex?.items?.length)await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,paycheckEv(yr,mo));
+        }catch{}
+      }
+      // Israeli holidays
+      let holidaysAdded=0;
+      for(const [date,[name,pct]] of Object.entries(IL_HOLIDAYS)){
+        try{
+          const[y,mo,d]=date.split("-").map(Number);
+          const tMin=new Date(y,mo-1,d,0,0).toISOString(),tMax=new Date(y,mo-1,d,23,59).toISOString();
+          const ex=await gcReq(token,"GET",`/calendars/${calIdRef.current}/events?timeMin=${tMin}&timeMax=${tMax}&q=${encodeURIComponent(name)}&singleEvents=true`);
+          if(!ex?.items?.length){
+            await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,{
+              summary:`🎉 ${name} — ${pct}% pay`,
+              description:`Holiday: ${name}\nRate: ${pct}% → ₪${pct===200?HOLIDAY_R:SHABBAT_R}/hr`,
+              start:{date},end:{date},colorId:pct===200?"11":"3",
+              reminders:{useDefault:false,overrides:[]}
+            });
+            holidaysAdded++;
+          }
+        }catch{}
+      }
+      await save(next);
+      const parts=[`✓ ${created} created, ${updated} updated`];
+      if(errors)parts.push(`${errors} failed${lastErr?` (${lastErr.slice(0,50)})`:""}`);
+      if(holidaysAdded)parts.push(`${holidaysAdded} holidays added`);
+      setGcMsg({ok:errors===0,text:parts.join(" · ")});
+    }catch(e){
+      setGcMsg({ok:false,text:`Sync failed: ${e.message}`});
+    }finally{
+      setSyncing(false);
+    }
+  }
+  async function syncOne(id){
+    if(!token)return;const sh=shifts.find(s=>s.id===id);if(!sh)return;
+    try{const ev=toGCal(sh);if(sh.gcalEventId){await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);}else{const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);await save(shifts.map(s=>s.id===id?{...s,gcalEventId:r.id}:s));}setGcMsg({ok:true,text:`✓ ${fmtDate(sh.date)} synced.`});}
+    catch(e){setGcMsg({ok:false,text:`Failed: ${e.message}`});}
+  }
+
+  // ── Derived ──
+  const notifs=getNotifs(shifts,dismissed);
+  const confirmed=shifts.filter(s=>shiftStatus(s)==="confirmed");
+  const totalHrs=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.hrs||0);},0);
+  const totalNet=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.net||0);},0);
+  const openCount=shifts.filter(s=>(!s.endTime&&!s.resolved)||( s.flagged&&!s.resolved)).length;
+  const futureCount=shifts.filter(s=>shiftStatus(s)==="future").length;
+  const syncedCount=shifts.filter(s=>s.gcalEventId).length;
+  const currentWeekStart=(()=>{const d=new Date();while(d.getDay()!==0)d.setDate(d.getDate()-1);return d.toLocaleDateString("en-CA");})();
+  const currentWeekEnd=(()=>{const d=new Date();while(d.getDay()!==6)d.setDate(d.getDate()+1);return d.toLocaleDateString("en-CA");})();
+  const currentWeekShifts=shifts.filter(s=>s.date>=currentWeekStart&&s.date<=currentWeekEnd);
+  const editingShift=editingShiftId?(
+    shifts.find(s=>s.id===editingShiftId) ||
+    // Also search archive weekData (when editing from archive tab)
+    Object.values(weekData).flatMap(w=>w.myShifts||[]).find(s=>s.id===editingShiftId)
+  ):null;
+  // For double shifts: also show the partner shift when editing
+  const editingShiftDate=editingShift?.date;
+  const editingShiftPartner=editingShift?.isDoubleShift&&editingShiftDate?(
+    shifts.filter(s=>s.date===editingShiftDate&&s.isDoubleShift&&s.id!==editingShiftId).concat(
+      Object.values(weekData).flatMap(w=>w.myShifts||[]).filter(s=>s.date===editingShiftDate&&s.isDoubleShift&&s.id!==editingShiftId)
+    )
+  ):[];
+  const pending=shifts.filter(s=>shiftStatus(s)==="pending");
+  const viewed=editingShift?[editingShift,...editingShiftPartner].sort((a,b)=>a.date.localeCompare(b.date)||(toMin(parseT(a.startTime)||{h:0,m:0})-toMin(parseT(b.startTime)||{h:0,m:0}))):shiftFilter==="shifts"?currentWeekShifts:shiftFilter==="pending"?pending:shiftFilter==="flagged"?shifts.filter(s=>!["confirmed","pending"].includes(shiftStatus(s))):confirmed;
+
+  // Pattern data
+  const allArchived=Object.values(weekData).flatMap(w=>w.myShifts||[]);
+  const dayFreq=Array(7).fill(0);allArchived.forEach(sh=>dayFreq[sh.dayOfWeek??new Date(sh.date).getDay()]++);
+  const maxDayFreq=Math.max(...dayFreq,1);
+  const morningCount=allArchived.filter(sh=>sh.isMorning||(parseT(sh.startTime)?.h??18)<16).length;
+  const eveningCount=allArchived.length-morningCount;
+  const lenBuckets=[0,0,0,0];allArchived.forEach(sh=>{const h=shiftHrsNum(sh);if(!h)return;if(h<4)lenBuckets[0]++;else if(h<6)lenBuckets[1]++;else if(h<8)lenBuckets[2]++;else lenBuckets[3]++;});
+  const maxLen=Math.max(...lenBuckets,1);
+  const monthlyHrs=Array(12).fill(0);Object.values(weekData).forEach(w=>{const mo=new Date(w.weekStart).getMonth();(w.myShifts||[]).forEach(sh=>{monthlyHrs[mo]+=(shiftHrsNum(sh)||0);});});
+  const maxMonthHrs=Math.max(...monthlyHrs,1);
+  const weeklyTrend=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;const myH=(w.myShifts||[]).reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0);const teamH=(w.rosterSummary||[]).reduce((s,r)=>s+r.totalHrs,0);return{key,weekStart:w.weekStart,myHrs:+myH.toFixed(1),teamAvgHrs:w.workerCount>0?+(teamH/w.workerCount).toFixed(1):0,shifts:(w.myShifts||[]).length};}).filter(Boolean);
+  const maxWeekHrs=Math.max(...weeklyTrend.map(w=>Math.max(w.myHrs,w.teamAvgHrs)),1);
+  const selData=selWeek?weekData[selWeek]:null;
+
+  const inp=(ex={})=>({background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"7px 10px",fontSize:12,fontFamily:mono,outline:"none",width:"100%",boxSizing:"border-box",...ex});
+  const badg=(col,txt)=>(<span style={{fontSize:9,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",padding:"2px 7px",borderRadius:20,background:`${col}18`,color:col,border:`1px solid ${col}30`}}>{txt}</span>);
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:mono}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=DM+Sans:wght@400;700&display=swap');
+        *{box-sizing:border-box}@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes spin{to{transform:rotate(360deg)}}
+        input:focus{border-color:${C.acc}!important;box-shadow:0 0 0 2px ${C.acc}20}button:active{opacity:.7}
+        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:${C.dim};border-radius:2px}
+      `}</style>
+
+      {/* ── Top Header ── */}
+      <div style={{padding:"12px 14px",borderBottom:`1px solid ${C.border}`,background:`linear-gradient(160deg,#0E1422,${C.bg})`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:9}}>
+          <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:700}}>Shift Tracker</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Patterns</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+          {notifs.length>0&&<span style={{fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:20,background:`${C.red}20`,color:C.red,border:`1px solid ${C.red}40`,animation:"pulse 2s infinite"}}>{notifs.length}!</span>}
+          {token?(
+            <>
+              {badg(C.green,"🔗 "+(email||"Connected"))}
+              {calendars.length>0&&<select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:130}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"💼 "+cal.name}</option>))}</select>}
+              <button onClick={exportICS} style={{background:`linear-gradient(135deg,${C.acc},#7C3AED)`,border:"none",borderRadius:8,color:"#fff",padding:"8px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
+                📅 Export Calendar (.ics)
+              </button>
+              <button onClick={testToken} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:8,color:C.acc,padding:"8px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔍 Test</button>
+              <button onClick={signOut} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>Sign out</button>
+              <button onClick={()=>window.open("https://myaccount.google.com/permissions","_blank")} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}} title="Revoke Google Calendar access">🔒 Revoke</button>
+              <button onClick={()=>setResetStep(1)} style={{background:`${C.red}20`,border:`1px solid ${C.red}50`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🗑 Reset</button>
+            </>
+          ):(
+            <>
+              <button onClick={signIn} style={{background:"linear-gradient(135deg,#EA4335,#FBBC05)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔗 Google</button>
+              <button onClick={()=>setShowPaste(v=>!v)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>📋 Paste URL</button>
+
+              <button onClick={()=>setResetStep(1)} style={{background:`${C.red}20`,border:`1px solid ${C.red}50`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🗑 Reset</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Main Nav Tabs ── */}
+      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
+        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["patterns","📊 Patterns"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
+            {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
+          </button>
+        ))}
+      </div>
+
+      <div style={{maxWidth:860,margin:"0 auto",padding:"14px 13px"}}>
+
+        {/* ── Global Paste URL panel — visible from any tab ── */}
+        {showPaste&&!token&&(
+          <div style={{background:C.surface,border:`1px solid ${C.acc}40`,borderRadius:9,padding:"12px 14px",marginBottom:12,animation:"slideIn .2s ease"}}>
+            {authSignInUrl&&(
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.yellow,marginBottom:5}}>Step 1 — Open this link in Chrome or Safari (not the Claude app):</div>
+                <div style={{display:"flex",gap:5,marginBottom:8}}>
+                  <input style={{...inp({fontSize:9,padding:"6px",color:C.muted,background:C.dim}),flex:1}} readOnly value={authSignInUrl}/>
+                  <button onClick={()=>{navigator.clipboard?.writeText(authSignInUrl).catch(()=>{});setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{background:copied?`${C.green}30`:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"6px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap"}}>
+                    {copied?"✓ Copied":"📋 Copy"}
+                  </button>
+                </div>
+                <div style={{fontSize:10,fontWeight:700,color:C.yellow,marginBottom:3}}>Step 2 — After signing in, copy the full URL from the address bar and paste below:</div>
+              </div>
+            )}
+            {!authSignInUrl&&(
+              <div style={{fontSize:10,color:C.muted,marginBottom:8,lineHeight:1.6}}>
+                1. Tap <strong style={{color:C.text}}>🔗 Google</strong> → sign in → approve.<br/>
+                2. You'll land on a claude.ai page — copy the full URL from the address bar.<br/>
+                3. Paste it below.
+              </div>
+            )}
+            <input style={{...inp({fontSize:11,padding:"10px"}),marginBottom:6}} placeholder="ya29xxxx... or full redirect URL" value={pasteUrl} onChange={e=>{setPasteUrl(e.target.value);setPasteErr("");}}/>
+            {pasteErr&&<div style={{fontSize:10,color:C.red,marginBottom:6}}>{pasteErr}</div>}
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>{
+                try{
+                  const raw=pasteUrl.trim();
+                  let t=null, exp=Date.now()+3600000;
+                  // Try: bare token (starts with ya29)
+                  if(raw.startsWith("ya29")){
+                    t=raw.split(/[&\s]/)[0]; // take up to & or space
+                  } else {
+                    // Try: full URL with hash fragment
+                    const h=raw.includes("#")?raw.split("#")[1]:raw.includes("access_token")?raw:null;
+                    if(h){
+                      const p=new URLSearchParams(h);
+                      t=p.get("access_token");
+                      const ei=parseInt(p.get("expires_in")||"0");
+                      if(ei>0) exp=Date.now()+ei*1000;
+                    }
+                  }
+                  if(!t||t.length<10){setPasteErr("Could not find a valid token. Copy the value after 'access_token=' in the URL, or paste the full URL.");return;}
+                  connectToken(t,exp);setShowPaste(false);setPasteUrl("");
+                }catch(e){setPasteErr("Error: "+e.message);}
+              }} disabled={!pasteUrl.trim()} style={{flex:1,background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"9px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:pasteUrl.trim()?1:0.4}}>
+                ✓ Connect
+              </button>
+              <button onClick={()=>{setShowPaste(false);setPasteUrl("");setPasteErr("");setAuthSignInUrl(null);}} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"9px 14px",fontSize:11,cursor:"pointer",fontFamily:mono}}>✕</button>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════ TRACKER TAB ══════════════ */}
+        {mainTab==="tracker"&&(
+          <div>
+            {/* Messages */}
+            {gcMsg&&<div style={{background:gcMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${gcMsg.ok?C.green:C.red}30`,borderRadius:8,padding:"9px 13px",fontSize:11,color:gcMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12}}><span style={{flex:1}}>{gcMsg.text}</span><button onClick={()=>setGcMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
+
+            {/* Not connected */}
+            <div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}30`,borderLeft:`3px solid ${C.acc}`,borderRadius:9,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>📅 Google Calendar</div><div style={{fontSize:10,color:C.muted}}>Tap <strong style={{color:C.text}}>Export Calendar (.ics)</strong> → copy the text → save as <strong style={{color:C.text}}>shifts.ics</strong> → open in Google Calendar.</div></div>
+
+            {/* ICS content panel */}
+            {showIcsPanel&&(
+              <div style={{background:C.surface,border:`1px solid ${C.green}40`,borderRadius:9,padding:"12px 13px",marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <span style={{fontSize:10,fontWeight:700,color:C.green}}>📅 Calendar data — copy & save as shifts.ics</span>
+                  <button onClick={()=>setShowIcsPanel(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13}}>✕</button>
+                </div>
+                <textarea readOnly value={icsContent} style={{width:"100%",height:120,background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:9,fontFamily:mono,padding:"8px",resize:"none",boxSizing:"border-box"}}/>
+                <button onClick={()=>{navigator.clipboard?.writeText(icsContent).catch(()=>{});setIcsCopied(true);setTimeout(()=>setIcsCopied(false),3000);}} style={{width:"100%",marginTop:7,background:icsCopied?`${C.green}30`:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"9px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>
+                  {icsCopied?"✓ Copied! Paste into a .ics file":"📋 Copy calendar data"}
+                </button>
+                <div style={{fontSize:9,color:C.muted,marginTop:6,lineHeight:1.5}}>
+                  On Android: paste into any text editor → save as shifts.ics → open with Google Calendar.<br/>
+                  On iOS: paste into Files app as shifts.ics → tap to import.
+                </div>
+              </div>
+            )}
+
+            {/* Notifications — collapsed summary with expand */}
+            {notifs.length>0&&(()=>{
+              // Group by type for summary
+              const urgent=notifs.filter(n=>n.type==="flagged"||n.type==="closing");
+              const pending=notifs.filter(n=>n.type==="pending");
+              const upcoming=notifs.filter(n=>n.type==="future");
+              const summaryColor=urgent.length>0?C.red:pending.length>0?C.yellow:C.acc;
+              const summaryIcon=urgent.length>0?"⚑":pending.length>0?"○":"◷";
+              const parts=[];
+              if(urgent.length>0) parts.push(`${urgent.length} urgent`);
+              if(pending.length>0) parts.push(`${pending.length} pending`);
+              if(upcoming.length>0) parts.push(`${upcoming.length} upcoming`);
+              const visibleNotifs=showAllNotifs?notifs:notifs.slice(0,1);
+              return(
+                <div style={{marginBottom:10}}>
+                  {/* Summary row */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:`${summaryColor}10`,border:`1px solid ${summaryColor}30`,borderRadius:8,marginBottom:showAllNotifs?6:0,cursor:"pointer"}} onClick={()=>setShowAllNotifs(v=>!v)}>
+                    <span style={{color:summaryColor,fontSize:13}}>{summaryIcon}</span>
+                    <span style={{flex:1,fontSize:11,fontWeight:700,color:summaryColor}}>{parts.join(" · ")}</span>
+                    <span style={{fontSize:9,color:C.muted}}>{showAllNotifs?"▲ hide":"▼ show all"}</span>
+                    <button onClick={e=>{e.stopPropagation();saveDis([...dismissed,...notifs.map(n=>n.key)]);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:"0 4px"}} title="Dismiss all">✕ all</button>
+                  </div>
+                  {/* Expanded list */}
+                  {showAllNotifs&&notifs.map(n=>(
+                    <div key={n.key} style={{background:`${n.color}10`,border:`1px solid ${n.color}25`,borderLeft:`3px solid ${n.color}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8,marginBottom:4,animation:"slideIn .2s ease"}}>
+                      <span style={{color:n.color,fontSize:13,marginTop:1,flexShrink:0}}>{n.icon}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:10,fontWeight:700,marginBottom:2,lineHeight:1.3}}>{n.title}</div>
+                        <div style={{fontSize:9,color:C.muted,lineHeight:1.4}}>{n.body}</div>
+                      </div>
+                      <button onClick={()=>saveDis([...dismissed,n.key])} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,flexShrink:0,padding:"0 2px"}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Summary */}
+            {shifts.length>0&&!editingShift&&(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:13}}>
+                {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[openCount>0?`${openCount} open`:"Clear","Unresolved",openCount>0?C.red:C.green],[`₪${Math.round(totalNet).toLocaleString()}`,"Net Est.",C.green]].map(([v,l,c])=>(
+                  <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 7px",textAlign:"center"}}><div style={{fontSize:17,fontWeight:700,color:c,marginBottom:1}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
+                ))}
+              </div>
+            )}
+
+            {/* Editing banner */}
+            {editingShift&&(
+              <div style={{background:`${C.acc}15`,border:`1px solid ${C.acc}40`,borderRadius:9,padding:"10px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10,animation:"slideIn .2s ease"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.acc}}>✏ Editing shift — {fmtDate(editingShift.date)}</div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:1}}>Make your changes below. They save automatically on blur.</div>
+                </div>
+                <button onClick={()=>{setEditingShiftId(null);setMainTab("archive");}} style={{background:`${C.acc}25`,border:`1px solid ${C.acc}`,borderRadius:7,color:C.acc,padding:"6px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>← Back</button>
+              </div>
+            )}
+
+          {/* Sub-tabs */}
+            {shifts.length>0&&!editingShift&&(
+              <div style={{display:"flex",gap:4,marginBottom:12}}>
+                {[["shifts",`This Week (${currentWeekShifts.length})`],["pending",`Pending (${shifts.filter(s=>shiftStatus(s)==="pending").length})`],["flagged",`Flagged (${openCount+futureCount})`],["confirmed",`Confirmed (${confirmed.length})`]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setShiftFilter(k)} style={{background:shiftFilter===k?C.acc:C.dim,border:"none",borderRadius:7,color:shiftFilter===k?"#fff":C.muted,padding:"5px 11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{l}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Empty */}
+            {shifts.length===0&&(
+              <div style={{textAlign:"center",padding:"44px 20px",color:C.muted}}>
+                <div style={{fontSize:38,marginBottom:10}}>📅</div>
+                <div style={{fontFamily:sans,fontWeight:700,fontSize:13,color:C.text,marginBottom:5}}>No shifts yet</div>
+                <div style={{fontSize:11}}>Upload a schedule in the Archive tab to get started</div>
+              </div>
+            )}
+
+            {/* Shift cards — double shifts get a shared header */}
+            {(()=>{
+              const usedDates=new Set();
+              return viewed.map((sh)=>{
+                  const isDouble=sh.isDoubleShift;
+                  const isFirstDouble=isDouble&&!usedDates.has(sh.date);
+                  if(isDouble) usedDates.add(sh.date);
+                  const dayShifts=isDouble?viewed.filter(s=>s.date===sh.date&&s.isDoubleShift):[];
+                  const partnerShift=isDouble?dayShifts.find(s=>s.id!==sh.id):null;
+                  const partnerMissingTips=isDouble&&partnerShift&&(partnerShift.myTipCash===undefined||partnerShift.myTipCash===null||partnerShift.myTipCash==="");
+                  // If this shift has tips but partner doesn't → show yellow pending, not confirmed
+                  if(isDouble&&st==="confirmed"&&partnerMissingTips) st="pending";
+                  const stRaw=shiftStatus(sh);
+                  const st=(stRaw==="confirmed"&&partnerMissingTips)?"pending":stRaw;
+                  const mt=sMeta(st),pay=calcPay(sh),synced=!!sh.gcalEventId;
+                  const hasTips=st==="confirmed"&&sh.myTipCash&&parseFloat(sh.myTipCash)>0;
+                  // Total day stats for double shift header
+                  const totalHrs=dayShifts.reduce((s,s2)=>s+(shiftHrsNum(s2)||0),0);
+                  const totalNet=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.net||0);},0);
+                  const totalGross=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.gross||0);},0);
+                  const totalTips=dayShifts.reduce((s,s2)=>s+(parseFloat(s2.myTipCash)||0),0);
+                  const hasNight=dayShifts.some(s2=>isNightShift(s2.startTime,s2.endTime,s2.crossesMidnight));
+                  const shiftLabel=isDouble?(sh.doubleShiftIdx===0?"☀ Morning":"🌙 Evening"):"";
+                  return(<>
+                    {/* Double shift day header — shown only once per date */}
+                    {isFirstDouble&&(
+                      <div key={sh.date+"_dbl"} style={{background:`${C.purple}12`,border:`1px solid ${C.purple}30`,borderRadius:"8px 8px 0 0",padding:"8px 13px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:10,fontWeight:700,color:C.purple}}>⚡ Double Shift — {fmtDate(sh.date)}</span>
+                        {hasNight&&<span style={{fontSize:9,color:C.acc}}>🌙 Night (OT→7h)</span>}
+                        <span style={{fontSize:9,color:C.muted}}>{totalHrs.toFixed(1)}h total</span>
+                        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+                          <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:6,padding:"3px 10px",textAlign:"center"}}>
+                            <div style={{fontSize:14,fontWeight:700,color:C.green}}>₪{totalNet.toFixed(0)}</div>
+                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Day Net</div>
+                          </div>
+                          <span style={{fontSize:10,color:C.muted}}>₪{totalGross.toFixed(0)} gross</span>
+                          {totalTips>0&&<span style={{fontSize:10,color:C.purple}}>₪{totalTips} tips</span>}
+                        </div>
+                      </div>
+                    )}
+                    {/* Shift card */}
+                    <div key={sh.id} id={`shift_${sh.id}`} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${mt.color}`,borderRadius:isDouble?(sh.doubleShiftIdx===0?"0":"0 0 10px 10px"):"10px",borderTop:isDouble&&sh.doubleShiftIdx>0?"none":undefined,padding:"12px 13px",marginBottom:isDouble&&sh.doubleShiftIdx<sh.doubleShiftTotal-1?0:8}}>
+                      {/* Header row */}
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:7,flexWrap:"wrap"}}>
+                        {badg(mt.color,`${mt.icon} ${mt.label}`)}
+                        {isDouble&&<span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:20,background:`${C.purple}20`,color:C.purple}}>{shiftLabel}</span>}
+                        {sh.clockStatus==="confirmed"&&badg("#22C55E","🟢 clocked")}
+                        {sh.clockStatus==="clocked_in"&&badg("#FB923C","◑ in only")}
+                        {badg(sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?C.purple:C.muted,sh.shiftType)}
+                        {getHoliday(sh.date)&&<span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:20,background:`${C.purple}20`,color:C.purple,border:`1px solid ${C.purple}40`}}>🎉 {getHoliday(sh.date)[0]}</span>}
+                        {sh.resolved&&badg(C.green,"✓ resolved")}
+                        {!isDouble&&<span style={{fontSize:12,fontWeight:700,fontFamily:sans}}>{fmtDate(sh.date)}</span>}
+                        {synced&&badg(C.green,"📅")}
+                        <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+                          <button onClick={()=>window.open(buildGCalUrl(sh),"_blank")} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>+ Cal</button>
+                          {!sh.resolved&&<button onClick={()=>upd(sh.id,{flagged:!sh.flagged,resolved:false})} style={{background:sh.flagged?`${C.red}25`:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{sh.flagged?"⚑ Flagged":"⚐ Flag"}</button>}
+                          {sh.flagged&&<button onClick={()=>upd(sh.id,{resolved:true,flagged:false})} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✓ Resolve</button>}
+                          {deleteConfirmId===sh.id?(
+                          <>
+                            <span style={{fontSize:9,color:C.red}}>Delete?</span>
+                            <button onClick={()=>{save(shifts.filter(s=>s.id!==sh.id));setDeleteConfirmId(null);}} style={{background:C.red,border:"none",borderRadius:6,color:"#fff",padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>Yes</button>
+                            <button onClick={()=>setDeleteConfirmId(null)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>No</button>
+                          </>
+                        ):(
+                          <button onClick={()=>setDeleteConfirmId(sh.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
+                        )}
+                        </div>
+                      </div>
+                      {/* Times */}
+                      <div style={{fontSize:19,fontWeight:700,letterSpacing:"-1px",marginBottom:3}}>
+                        {sh.startTime??"--:--"}<span style={{color:C.muted,fontSize:12,margin:"0 6px"}}>→</span>
+                        {sh.endTime?<>{sh.endTime}{sh.crossesMidnight&&<span style={{fontSize:10,color:C.muted}}> +1</span>}</>:<span style={{color:C.muted}}>--:--</span>}
+                        {pay&&<span style={{fontSize:10,color:C.muted,marginLeft:9}}>{pay.hrs}h</span>}
+                      </div>
+                      {/* Pay box */}
+                      {pay&&(
+                        <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center",flexWrap:"wrap"}}>
+                          {(()=>{
+                            const isConf=st==="confirmed";
+                            const boxColor=isConf?C.green:C.yellow;
+                            const bd=pay.breakdown;
+                            return(<>
+                              <div style={{background:`${boxColor}15`,border:`1px solid ${boxColor}30`,borderRadius:8,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:80}}>
+                                <span style={{fontSize:16,fontWeight:700,color:boxColor,letterSpacing:"-0.5px"}}>₪{pay.net}</span>
+                                <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isConf?"Net":"Est. Net"}</span>
+                              </div>
+                              <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                                <span style={{fontSize:10,color:C.muted}}>₪{pay.gross} gross · {pay.hrs}h</span>
+                                {pay.tips>0&&<span style={{fontSize:10,color:C.purple}}>₪{pay.tips} tips</span>}
+                                {bd&&!bd.isPremium&&(bd.otHrs1>0||bd.otHrs2>0)&&(
+                                  <span style={{fontSize:9,color:C.acc}}>
+                                    {bd.reg.toFixed(1)}h×₪{BASE_RATE}
+                                    {bd.otHrs1>0?` + ${bd.otHrs1.toFixed(1)}h×125%`:""}
+                                    {bd.otHrs2>0?` + ${bd.otHrs2.toFixed(1)}h×150%`:""}
+                                    {bd.isNight?" 🌙":""}
+                                  </span>
+                                )}
+                                {sh.isDoubleShift&&sh.priorDayHrs>0&&<span style={{fontSize:9,color:C.purple}}>+{sh.priorDayHrs}h carried from earlier shift</span>}
+                              </div>
+                            </>);
+                          })()}
+                        </div>
+                      )}
+                      {/* Input fields — hidden for future no-end shifts */}
+                      <div style={{display:(!sh.endTime&&shiftStatus(sh)==="future")?"none":"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                          <label style={{fontSize:9,color:!sh.endTime?C.red:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{!sh.endTime?"⚠ ":""}End Time</label>
+                          <input style={inp(!sh.endTime?{background:"#EF444408",borderColor:"#EF444440"}:{})} placeholder="HH:MM" defaultValue={sh.endTime??""} onBlur={e=>upd(sh.id,{endTime:e.target.value.trim()})}/>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                          <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tip ₪/h</label>
+                          {(()=>{
+                            const segHrs=isDouble?(shiftHrsNum(sh)||0):(pay?.hrs||0);
+                            const segPay=isDouble?calcShiftPay(sh,sh.priorDayHrs||0):pay;
+                            const tipsCash=parseFloat(sh.myTipCash||"");
+                            const basePerHr=segPay&&segHrs>0?((segPay.gross-(isNaN(tipsCash)?0:tipsCash))/segHrs):null;
+                            const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
+                            const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
+                            const displayVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"—";
+                            // Editable hourly box — shows effective ₪/h, user can type total to back-calc tips
+                            const effectiveDisplay=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"";
+                            const handleHourlyBlur=e=>{
+                              const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                              if(isNaN(raw)||segHrs<=0){e.target.value=effectiveDisplay;return;}
+                              const effectiveBase=basePerHr||shiftBaseRate(sh);
+                              const tipRate=raw>effectiveBase?raw-effectiveBase:raw;
+                              const tipTotal=+(tipRate*segHrs).toFixed(2);
+                              upd(sh.id,{myTipCash:tipTotal+""});
+                            };
+                            return(
+                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                <input
+                                  key={`hrly_${sh.id}_${sh.myTipCash}`}
+                                  style={inp({color:totalPerHr!=null?C.text:C.muted})}
+                                  placeholder={basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"₪/h"}
+                                  defaultValue={effectiveDisplay}
+                                  onFocus={e=>{
+                                    // Strip ₪/h suffix on focus for easier editing
+                                    const v=parseFloat(e.target.value);
+                                    if(!isNaN(v)) e.target.value=v.toFixed(2);
+                                    e.target.select();
+                                  }}
+                                  onBlur={e=>{
+                                    handleHourlyBlur(e);
+                                    // Restore display format after blur
+                                    const raw=parseFloat(e.target.value);
+                                    if(!isNaN(raw)) e.target.value=raw.toFixed(2)+"₪/h";
+                                  }}/>
+                                {basePerHr!=null&&tipsPerHr!=null&&(
+                                  <span style={{fontSize:8,color:C.muted}}>
+                                    ₪{basePerHr.toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips
+                                  </span>
+                                )}
+                                {basePerHr!=null&&tipsPerHr==null&&(
+                                  <span style={{fontSize:8,color:C.muted}}>type total ₪/h to set tips</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                        {(()=>{
+                          // Detect split-pool shift: starts before 18:00 AND ends after 18:00
+                          const stH=parseT(sh.startTime)?.h??0;
+                          const etH=parseT(sh.endTime)?.h??0;
+                          const etM=parseT(sh.endTime)?.m??0;
+                          const splitPool=sh.endTime&&stH<18&&(sh.crossesMidnight||etH>18||(etH===18&&etM>0));
+                          if(splitPool){
+                            const morningMins=Math.max(0,(18*60)-(stH*60+(parseT(sh.startTime)?.m??0)));
+                            const totalMins=(()=>{let d=toMin(parseT(sh.endTime))-toMin(parseT(sh.startTime));if(sh.crossesMidnight||d<0)d+=1440;return d;})();
+                            const eveningMins=Math.max(0,totalMins-morningMins);
+                            const mHrs=+(morningMins/60).toFixed(2);
+                            const mH=+(morningMins/60).toFixed(2);
+                            const eH=+(eveningMins/60).toFixed(2);
+                            const mTips=parseFloat(sh.morningTips||"");
+                            const eTips=parseFloat(sh.eveningTips||"");
+                            const totalTips=(!isNaN(mTips)?mTips:0)+(!isNaN(eTips)?eTips:0);
+                            return(<>
+                              <div style={{gridColumn:"1 / -1",background:`${C.purple}08`,border:`1px solid ${C.purple}20`,borderRadius:7,padding:"8px 10px",marginTop:2}}>
+                                <div style={{fontSize:9,color:C.purple,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:7}}>⚡ Split Tip Pools ({mH.toFixed(1)}h morning + {eH.toFixed(1)}h evening)</div>
+                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                                  {/* Morning */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tips ₪</label>
+                                    <input key={`mt_m_${sh.id}`} style={inp()} placeholder="0" defaultValue={sh.morningTips??""}
+                                      onBlur={e=>{const v=e.target.value.trim();const t=parseFloat(v);const tot=(!isNaN(t)?t:0)+(!isNaN(parseFloat(sh.eveningTips||""))?parseFloat(sh.eveningTips):0);upd(sh.id,{morningTips:isNaN(t)?"":v,myTipCash:tot>0?tot+"":sh.myTipCash});}}/>
+                                  </div>
+                                  {/* Evening */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tips ₪</label>
+                                    <input key={`mt_e_${sh.id}`} style={inp()} placeholder="0" defaultValue={sh.eveningTips??""}
+                                      onBlur={e=>{const v=e.target.value.trim();const t=parseFloat(v);const tot=(!isNaN(t)?t:0)+(!isNaN(parseFloat(sh.morningTips||""))?parseFloat(sh.morningTips):0);upd(sh.id,{eveningTips:isNaN(t)?"":v,myTipCash:tot>0?tot+"":sh.myTipCash});}}/>
+                                  </div>
+                                  {/* Morning hourly */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning ₪/h total</label>
+                                    <input key={`mh_m_${sh.id}_${sh.morningTips}`} style={inp()} placeholder="total ₪/h (e.g. 60)"
+                                      defaultValue={sh.morningTips&&mH>0?(shiftBaseRate(sh)+(parseFloat(sh.morningTips)/mH)).toFixed(2):""}
+                                      onBlur={e=>{
+                                        const raw=e.target.value.trim();
+                                        const r=parseFloat(raw);
+                                        if(!isNaN(r)&&mH>0){
+                                          // If user enters total hourly (e.g. 60), subtract base (44) to get tip rate
+                                          // If user enters tip-only rate (e.g. 16), use directly
+                                          // Heuristic: if value > shift base rate, treat as total and subtract
+                                          const br=shiftBaseRate(sh);const tipRate=r>br?r-br:r;
+                                          const v=+(tipRate*mH).toFixed(2);
+                                          const tot=v+(!isNaN(parseFloat(sh.eveningTips||""))?parseFloat(sh.eveningTips):0);
+                                          upd(sh.id,{morningTips:v+"",myTipCash:tot>0?tot+"":sh.myTipCash});
+                                        }
+                                      }}/>
+                                  </div>
+                                  {/* Evening hourly */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening ₪/h total</label>
+                                    <input key={`mh_e_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder="total ₪/h (e.g. 60)"
+                                      defaultValue={sh.eveningTips&&eH>0?(shiftBaseRate(sh)+(parseFloat(sh.eveningTips)/eH)).toFixed(2):""}
+                                      onBlur={e=>{
+                                        const raw=e.target.value.trim();
+                                        const r=parseFloat(raw);
+                                        if(!isNaN(r)&&eH>0){
+                                          const br2=shiftBaseRate(sh);const tipRate=r>br2?r-br2:r;
+                                          const v=+(tipRate*eH).toFixed(2);
+                                          const tot=(!isNaN(parseFloat(sh.morningTips||""))?parseFloat(sh.morningTips):0)+v;
+                                          upd(sh.id,{eveningTips:v+"",myTipCash:tot>0?tot+"":sh.myTipCash});
+                                        }
+                                      }}/>
+                                  </div>
+                                </div>
+                                {totalTips>0&&(
+                                  <div style={{fontSize:10,color:C.purple,fontWeight:700,marginTop:6,display:"flex",gap:8,alignItems:"center"}}>
+                                    <span>Total: ₪{totalTips.toFixed(0)}</span>
+                                    <span style={{fontSize:9,color:C.muted,fontWeight:400}}>☀₪{isNaN(mTips)?0:mTips.toFixed(0)} + 🌙₪{isNaN(eTips)?0:eTips.toFixed(0)}</span>
+                                    {pay?.hrs&&<span style={{fontSize:9,color:C.muted,fontWeight:400}}>avg ₪{(totalTips/pay.hrs).toFixed(2)}/h</span>}
+                                  </div>
+                                )}
+                              </div>
+                            </>);
+                          }
+                          if(isDouble){
+                            return(
+                              <DoubleTipField
+                                sh={sh}
+                                hrs={shiftHrsNum(sh)||0}
+                                partnerTips={partnerShift?.myTipCash}
+                                partnerOk={partnerTipsEntered}
+                                partnerName={sh.doubleShiftIdx===0?"Evening":"Morning"}
+                                updFn={upd}
+                                inpFn={inp}
+                                colors={{yellow:C.yellow,acc:C.acc,muted:C.muted,purple:C.purple}}
+                                fontMono={mono}
+                              />
+                            );
+                          }
+                          return(
+                            <div style={{display:"flex",flexDirection:"column",gap:3,gridColumn:"1 / -1"}}>
+                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>My Tips ₪ (cash received)</label>
+                              <input key={`mt_${sh.id}`} style={inp()} placeholder="e.g. 165" defaultValue={sh.myTipCash??""}
+                                onBlur={e=>{ const tips=parseFloat(e.target.value.trim()); upd(sh.id,{myTipCash:isNaN(tips)?"":tips+""}); }}/>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      {/* Tips collected banner — separate per shift for doubles */}
+                      {hasTips&&(()=>{
+                        const isLastDouble=isDouble&&sh.doubleShiftIdx===sh.doubleShiftTotal-1;
+                        const shiftLabel=isDouble?(sh.doubleShiftIdx===0?"☀ Morning":"🌙 Evening"):"";
+                        const shiftColor=isDouble?(sh.doubleShiftIdx===0?C.yellow:C.acc):null;
+                        const collected=sh.tipsCollected;
+                        const pending=sh.tipsPending;
+                        const bannerColor=collected?C.green:pending?C.purple:(shiftColor||C.yellow);
+                        const dayTotal=isDouble?dayShifts.reduce((s,s2)=>s+(parseFloat(s2.myTipCash)||0),0):null;
+                        const allCollected=isDouble?dayShifts.every(s=>s.tipsCollected):false;
+                        return(
+                          <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
+                            <div style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",background:`${bannerColor}10`,border:`1px solid ${bannerColor}30`,borderRadius:7}}>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:10,fontWeight:700,color:bannerColor,marginBottom:1}}>
+                                  {collected?`✓ ${shiftLabel} tips collected`:pending?`💸 ${shiftLabel} tips pending`:`💰 ${shiftLabel} tips not marked`}
+                                </div>
+                                <div style={{fontSize:9,color:C.muted}}>
+                                  {collected?`₪${sh.myTipCash} received`:pending?`₪${sh.myTipCash} pending`:`Got ₪${sh.myTipCash}?`}
+                                </div>
+                              </div>
+                              <div style={{display:"flex",gap:5}}>
+                                {!collected&&<button onClick={()=>upd(sh.id,{tipsPending:true,tipsCollected:false})} style={{background:`${C.purple}18`,border:`1px solid ${C.purple}40`,borderRadius:6,color:C.purple,padding:"5px 8px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>Not yet</button>}
+                                <button onClick={()=>upd(sh.id,{tipsCollected:true,tipsPending:false})} style={{background:collected?`${C.green}30`:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"5px 8px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{collected?"✓ Got it":"Got it"}</button>
+                              </div>
+                            </div>
+                            {isLastDouble&&dayTotal>0&&(
+                              <div style={{padding:"7px 10px",background:allCollected?`${C.green}08`:`${C.purple}08`,border:`1px solid ${allCollected?C.green:C.purple}25`,borderRadius:7,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                <span style={{fontSize:10,color:allCollected?C.green:C.muted,fontWeight:600}}>
+                                  {allCollected?"✓ Full day collected":"Day total tips"}
+                                </span>
+                                <span style={{fontSize:11,fontWeight:700,color:C.text}}>₪{dayTotal.toFixed(0)}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </>);
+                });
+            })()}
+          </div>
+        )}
+
+        {/* ══════════════ ARCHIVE TAB ══════════════ */}
+        {mainTab==="archive"&&(
+          <div>
+            {/* Archive header row */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+              <div style={{display:"flex",gap:5}}>
+                {archiveView==="detail"&&<button onClick={()=>{setArchiveView("timeline");setSelWeek(null);}} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"6px 11px",fontSize:10,cursor:"pointer",fontFamily:mono}}>← Timeline</button>}
+                {["timeline","detail"].map(v=>(
+                  <button key={v} onClick={()=>{if(v==="detail"&&!selWeek)return;setArchiveView(v);}} style={{background:archiveView===v?C.acc:C.dim,border:"none",borderRadius:7,color:archiveView===v?"#fff":C.muted,padding:"6px 11px",fontSize:10,fontWeight:700,cursor:v==="detail"&&!selWeek?"not-allowed":"pointer",fontFamily:mono,opacity:v==="detail"&&!selWeek?0.3:1}}>
+                    {v==="timeline"?"🗓 Year":"🔍 Week"+(selWeek?` · ${fmtShort(weekData[selWeek]?.weekStart)}`:"")}
+                  </button>
+                ))}
+              </div>
+              <label style={{display:"inline-flex",alignItems:"center",gap:5,background:importing?C.dim:`linear-gradient(135deg,${C.green},#059669)`,border:"none",borderRadius:8,color:importing?C.yellow:"#fff",padding:"8px 13px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>
+                {importing?"⏳ Importing…":"↑ Upload Schedule"}
+                <input type="file" accept=".xlsx,.xls" multiple style={{display:"none"}} onChange={onArchiveFile}/>
+              </label>
+            </div>
+
+            {/* Archive message */}
+            {archiveMsg&&<div style={{background:archiveMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${archiveMsg.ok?C.green:C.red}30`,borderRadius:8,padding:"9px 13px",fontSize:11,color:archiveMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12,animation:"slideIn .25s ease"}}><span style={{flex:1}}>{archiveMsg.text}</span><button onClick={()=>setArchiveMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
+
+            {/* Archive summary */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:13}}>
+              {[[archiveIndex.length,"Archived",C.acc],[Object.values(weekData).flatMap(w=>w.myShifts||[]).length,"Total Shifts",C.text],[Object.values(weekData).flatMap(w=>w.myShifts||[]).reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0).toFixed(0)+"h","Total Hours",C.green]].map(([v,l,c])=>(
+                <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 7px",textAlign:"center"}}><div style={{fontSize:17,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
+              ))}
+            </div>
+
+            {/* Timeline */}
+            {archiveView==="timeline"&&(
+              <div>
+                <div style={{fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",marginBottom:9}}>{YEAR} · tap a green week</div>
+                {Array.from({length:12},(_,mi)=>{
+                  const mw=weeks.filter(w=>w.start.getMonth()===mi||(w.end.getMonth()===mi&&w.start.getMonth()!==mi));
+                  if(!mw.length)return null;
+                  return(
+                    <div key={mi} style={{marginBottom:13}}>
+                      <div style={{fontSize:9,fontWeight:700,color:C.muted,marginBottom:5,letterSpacing:"1px",textTransform:"uppercase",borderBottom:`1px solid ${C.border}`,paddingBottom:3}}>{MONTHS[mi]}</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                        {mw.map(w=>{
+                          const arc=!!weekData[w.key],wd=weekData[w.key],isPast=w.end<new Date(),isCur=w.start<=new Date()&&w.end>=new Date(),isSel=selWeek===w.key;
+                          // Determine week health color based on worst shift status
+                          const weekColor=(()=>{
+                            if(!arc) return isCur?C.yellow:C.border;
+                            const shifts=wd?.myShifts||[];
+                            const statuses=shifts.map(s=>shiftStatus(s));
+                            if(statuses.some(s=>s==="flagged"||s==="closing"||s==="fail")) return C.red;
+                            if(statuses.some(s=>s==="pending"||s==="future"||s==="clocked_in")) return C.yellow;
+                            if(statuses.length>0&&statuses.every(s=>s==="confirmed")) return C.green;
+                            return C.green;
+                          })();
+                          return(
+                            <button key={w.key} onClick={()=>{if(arc){setSelWeek(w.key);setArchiveView("detail");setMainTab("archive");}}} style={{background:isSel?C.acc:arc?`${weekColor}18`:isPast?C.dim:"transparent",border:`2px solid ${isSel?C.acc:isCur?C.yellow:weekColor}`,borderRadius:7,padding:"5px 7px",cursor:arc?"pointer":"default",fontFamily:mono,minWidth:50,textAlign:"center",boxShadow:isCur?`0 0 8px ${C.yellow}50`:(arc&&!isSel&&weekColor===C.red)?`0 0 6px ${C.red}40`:"none"}}>
+                              <div style={{fontSize:8,color:isSel?"#fff":arc?C.green:isCur?C.yellow:C.muted,fontWeight:700}}>W{w.weekNum}</div>
+                              <div style={{fontSize:7,color:isSel?"#ffffff99":C.muted}}>{fmtShort(w.key)}</div>
+                              {arc&&<div style={{fontSize:7,color:isSel?"#fff":C.green,marginTop:1}}>{wd?.myShifts?.length||0}s{wd?.reconciled?" ✓":""}</div>}
+                              {!arc&&isPast&&<div style={{fontSize:7,color:C.dim,marginTop:1}}>—</div>}
+                              {isCur&&!arc&&<div style={{fontSize:7,color:C.yellow,marginTop:1}}>now</div>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{display:"flex",gap:12,marginTop:6,flexWrap:"wrap"}}>
+                  {[[C.green,"All confirmed"],[C.yellow,"Pending/estimated"],[C.red,"Flagged/open end"],["#232D42","No file"]].map(([c,l])=>(
+                    <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:C.muted}}><div style={{width:9,height:9,borderRadius:2,background:c,border:`1px solid ${c}`,opacity:0.7}}/>{l}</div>
+                  ))}
+                </div>
+                {archiveIndex.length===0&&<div style={{textAlign:"center",padding:"36px 20px",color:C.muted}}><div style={{fontSize:32,marginBottom:9}}>📂</div><div style={{fontFamily:sans,fontWeight:700,fontSize:12,color:C.text,marginBottom:5}}>No schedules archived yet</div><div style={{fontSize:11}}>Upload your weekly schedule file above</div></div>}
+              </div>
+            )}
+
+            {/* Detail */}
+            {archiveView==="detail"&&selData&&(
+              <div style={{animation:"slideIn .25s ease"}}>
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 13px",marginBottom:11}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:7}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,letterSpacing:"-0.3px"}}>{fmtFull(selData.weekStart)} — {fmtFull(selData.weekEnd)}</div>
+                      <div style={{fontSize:9,color:C.muted,marginTop:2,display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
+                        <span>Uploaded {new Date(selData.uploadedAt).toLocaleDateString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}{selData.fileName&&` · ${selData.fileName}`}</span>
+                        {selData.reconciled&&badg(C.green,"✓ Reconciled")}
+                        {!selData.reconciled&&(selData.myShifts||[]).some(s=>s.reconciled)&&badg(C.yellow,"~ Partial")}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:5}}>
+                      <button onClick={()=>downloadFile(selWeek)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>↓ xlsx</button>
+                      <button onClick={()=>deleteWeek(selWeek)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:7,color:C.red,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>🗑</button>
+                    </div>
+                  </div>
+                  {(()=>{
+                    const weekNet=(selData.myShifts||[]).reduce((sum,sh)=>{
+                      const s=parseT(sh.startTime),e=parseT(sh.endTime);
+                      const hrs=shiftHrs(s,e,sh.crossesMidnight);if(!hrs)return sum;
+                      const _p=calcShiftPay(sh,sh.priorDayHrs||0);
+                      const base=_p?_p.gross-(parseFloat(sh.myTipCash)||0):0;
+                      const tips=parseFloat(sh.myTipCash)||0;
+                      return sum+(base+tips-PENSION*hrs);
+                    },0);
+                    return(
+                      <div style={{display:"flex",gap:10,marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,flexWrap:"wrap",alignItems:"center"}}>
+                        <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:8,padding:"8px 14px",textAlign:"center",minWidth:90}}>
+                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(weekNet).toLocaleString()}</div>
+                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Week Net</div>
+                        </div>
+                        {token&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:4,justifyContent:"center"}}>
+                            <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 12px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:5}}>
+                              {weekSyncing?"Syncing...":"Sync week to Google Cal"}
+                            </button>
+                            {weekSyncMsg&&<div style={{fontSize:9,color:weekSyncMsg.ok?C.green:C.yellow,marginTop:2}}>{weekSyncMsg.text}</div>}
+                          </div>
+                        )}
+                        {[[selData.myShifts?.length||0,"Shifts"],[selData.myShifts?.reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0).toFixed(1)+"h","Hours"],[selData.workerCount||0,"Workers"],[selData.rosterSummary?.length||0,"Staff"]].map(([v,l])=>(
+                          <div key={l}><div style={{fontSize:14,fontWeight:700}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div style={{fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",marginBottom:7}}>My Shifts</div>
+                {[...(selData.myShifts||[])].filter(sh=>sh.date>=selData.weekStart&&sh.date<=selData.weekEnd).sort((a,b)=>a.date.localeCompare(b.date)||(a.startTime||"").localeCompare(b.startTime||"")).map(sh=>(
+                  <div key={sh.id} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${sh.shiftType==="Shabbat"?C.purple:sh.endTime?C.acc:C.yellow}`,borderRadius:8,padding:"9px 11px",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,flexWrap:"wrap"}}>
+                      {badg(sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?C.purple:C.muted,sh.shiftType)}
+                    {getHoliday(sh.date)&&<span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:20,background:`${C.purple}20`,color:C.purple,border:`1px solid ${C.purple}40`}}>🎉 {getHoliday(sh.date)[0]}</span>}
+                      {(()=>{
+                          const archiveSt=shiftStatus(sh);
+                          if(archiveSt==="confirmed") return badg(C.green,"✓ confirmed");
+                          if(archiveSt==="pending") return badg(C.yellow,"○ pending");
+                          if(archiveSt==="flagged") return badg(C.red,"⚑ flagged");
+                          if(archiveSt==="future") return badg(C.yellow,"◷ estimated");
+                          return badg(C.yellow,"○ pending");
+                        })()}
+                      <span style={{fontSize:11,fontWeight:700,fontFamily:sans}}>{fmtFull(sh.date)}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+                      <div style={{fontSize:17,fontWeight:700,letterSpacing:"-1px"}}>
+                        {sh.startTime??"--:--"}<span style={{color:C.muted,fontSize:12,margin:"0 6px"}}>→</span>
+                        {sh.endTime??<span style={{color:C.muted}}>--:--</span>}
+                        {sh.crossesMidnight&&<span style={{fontSize:9,color:C.muted}}> +1</span>}
+                        {shiftHrsNum(sh)&&<span style={{fontSize:9,color:C.muted,marginLeft:6}}>{shiftHrsNum(sh)}h</span>}
+                      </div>
+                      {(()=>{
+                        const hrs=shiftHrsNum(sh);
+                        if(!hrs)return null;
+                        const _p2=calcShiftPay(sh,sh.priorDayHrs||0);
+                        const base=_p2?_p2.gross-(parseFloat(sh.myTipCash)||0):0;
+                        const tips=parseFloat(sh.myTipCash)||0;
+                        const net=+(base+tips-PENSION*hrs).toFixed(0);
+                        return <span style={{fontSize:12,fontWeight:700,color:C.green}}>₪{net}</span>;
+                      })()}
+                      <button onClick={()=>{setEditingShiftId(sh.id);setMainTab("tracker");}} style={{marginLeft:"auto",background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"3px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✏ Edit</button>
+                    </div>
+                  </div>
+                ))}
+
+                {(selData.rosterSummary||[]).length>0&&(
+                  <div style={{marginTop:12}}>
+                    <div style={{fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",marginBottom:7}}>Full Roster</div>
+                    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:9,overflow:"hidden"}}>
+                      {selData.rosterSummary.map((worker,i)=>{
+                        const isMe=worker.name.toLowerCase().split(" ").some(p=>p.length>1&&MY_NAME.toLowerCase().includes(p));
+                        const maxH=Math.max(...selData.rosterSummary.map(w=>w.totalHrs),1);
+                        return(
+                          <div key={worker.name} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 11px",borderBottom:i<selData.rosterSummary.length-1?`1px solid ${C.border}`:"none",background:isMe?`${C.acc}08`:"transparent"}}>
+                            <div style={{width:5,height:5,borderRadius:"50%",background:isMe?C.acc:C.dim,flexShrink:0}}/>
+                            <div style={{width:110,fontSize:10,color:isMe?C.acc:C.text,fontWeight:isMe?"700":"400",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{worker.name}</div>
+                            <div style={{flex:1,display:"flex",alignItems:"center",gap:5}}><Bar value={worker.totalHrs} max={maxH} color={isMe?C.acc:C.dim} height={5}/><span style={{fontSize:9,color:isMe?C.acc:C.muted,width:28,flexShrink:0}}>{worker.totalHrs.toFixed(0)}h</span></div>
+                            <div style={{fontSize:9,color:C.muted,width:14,textAlign:"right"}}>{worker.shifts}s</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══════════════ PATTERNS TAB ══════════════ */}
+        {mainTab==="patterns"&&(
+          <div>
+            {allArchived.length===0?(
+              <div style={{textAlign:"center",padding:"44px 20px",color:C.muted}}>
+                <div style={{fontSize:36,marginBottom:10}}>📊</div>
+                <div style={{fontFamily:sans,fontWeight:700,fontSize:13,color:C.text,marginBottom:5}}>No data yet</div>
+                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see patterns</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+                {/* Day of week */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Day of Week Frequency</div>
+                  {DAYS.map((day,i)=>(
+                    <div key={day} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
+                      <div style={{width:26,fontSize:10,color:i===6?C.purple:i===5?C.yellow:C.muted,fontWeight:i>=5?"700":"400"}}>{day}</div>
+                      <Bar value={dayFreq[i]} max={maxDayFreq} color={i===6?C.purple:i===5?C.yellow:C.acc}/>
+                      <div style={{width:18,fontSize:10,color:C.muted,textAlign:"right"}}>{dayFreq[i]}</div>
+                      <div style={{width:30,fontSize:9,color:C.muted}}>{allArchived.length>0?Math.round((dayFreq[i]/allArchived.length)*100)+"%":""}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Morning vs Evening */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Morning vs Evening Split</div>
+                  {[["🌅 Morning (<16:00)",morningCount,C.yellow],["🌙 Evening (≥16:00)",eveningCount,C.acc]].map(([label,val,color])=>(
+                    <div key={label} style={{marginBottom:9}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color}}>{label}</span><span style={{fontSize:10,color,fontWeight:700}}>{val} ({allArchived.length>0?Math.round((val/allArchived.length)*100):0}%)</span></div>
+                      <Bar value={val} max={allArchived.length} color={color} height={8}/>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Shift length distribution */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Shift Length Distribution</div>
+                  {[["Under 4h",lenBuckets[0],C.red],["4–6 hours",lenBuckets[1],C.yellow],["6–8 hours",lenBuckets[2],C.acc],["8h+",lenBuckets[3],C.green]].map(([label,val,color])=>(
+                    <div key={label} style={{display:"flex",alignItems:"center",gap:9,marginBottom:7}}>
+                      <div style={{width:58,fontSize:10,color:C.muted}}>{label}</div>
+                      <Bar value={val} max={maxLen} color={color}/>
+                      <div style={{width:14,fontSize:10,color:C.muted,textAlign:"right"}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Weekly hrs: you vs team */}
+                {weeklyTrend.length>1&&(
+                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:5}}>Weekly Hours: You vs Team Average</div>
+                    <div style={{display:"flex",gap:12,marginBottom:9}}>
+                      {[[C.acc,"You"],[C.dim,"Team avg"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:c}}><div style={{width:9,height:3,background:c,borderRadius:1}}/>{l}</div>
+                      ))}
+                    </div>
+                    {weeklyTrend.map(w=>(
+                      <div key={w.key} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
+                        <div style={{width:36,fontSize:8,color:C.muted,flexShrink:0}}>{fmtShort(w.weekStart)}</div>
+                        <div style={{flex:1,display:"flex",flexDirection:"column",gap:2}}>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}><Bar value={w.myHrs} max={maxWeekHrs} color={C.acc} height={5}/><span style={{fontSize:8,color:C.acc,width:26}}>{w.myHrs}h</span></div>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}><Bar value={w.teamAvgHrs} max={maxWeekHrs} color={C.dim} height={5}/><span style={{fontSize:8,color:C.muted,width:26}}>{w.teamAvgHrs}h</span></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Monthly hours */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Monthly Hours</div>
+                  {MONTHS.map((mn,i)=>{
+                    if(monthlyHrs[i]===0)return null;
+                    return(
+                      <div key={mn} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
+                        <div style={{width:26,fontSize:10,color:C.muted}}>{mn}</div>
+                        <Bar value={monthlyHrs[i]} max={maxMonthHrs} color={C.green} height={8}/>
+                        <div style={{width:34,fontSize:10,color:C.green,textAlign:"right",fontWeight:700}}>{monthlyHrs[i].toFixed(0)}h</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+
+      {/* ── Auth toast notification ── */}
+      {authToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",
+          background:authToast.ok?`${C.green}EE`:`${C.red}EE`,
+          color:"#fff",borderRadius:10,padding:"12px 20px",
+          fontSize:12,fontWeight:700,fontFamily:mono,
+          boxShadow:"0 4px 20px #00000060",zIndex:2000,
+          animation:"slideIn .3s ease",whiteSpace:"nowrap",
+          maxWidth:"90vw",textAlign:"center"}}>
+          {authToast.text}
+        </div>
+      )}
+
+      {/* ── Reset confirmation modal ── */}
+      {resetStep>0&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}}>
+          <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:14,padding:"24px 20px",maxWidth:340,width:"100%",fontFamily:mono}}>
+            {resetStep===1&&(
+              <>
+                <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:10}}>🗑 Reset All Data?</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.7,marginBottom:16}}>
+                  This will permanently delete:<br/>
+                  • All shifts &amp; records<br/>
+                  • All archived schedules &amp; files<br/>
+                  • All notifications<br/>
+                  • Google Calendar connection<br/><br/>
+                  <span style={{color:C.red,fontWeight:700}}>This cannot be undone.</span>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setResetStep(0)} style={{flex:1,background:C.dim,border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:mono}}>Cancel</button>
+                  <button onClick={()=>setResetStep(2)} style={{flex:1,background:`${C.red}25`,border:`1px solid ${C.red}`,borderRadius:8,color:C.red,padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:mono}}>Yes, continue</button>
+                </div>
+              </>
+            )}
+            {resetStep===2&&(
+              <>
+                <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:10}}>⚠ Last chance</div>
+                <div style={{fontSize:12,color:C.text,marginBottom:20,lineHeight:1.6}}>Permanently delete <strong>everything</strong>? There is no undo.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setResetStep(0)} style={{flex:1,background:C.dim,border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:mono}}>Cancel</button>
+                  <button onClick={doReset} style={{flex:2,background:C.red,border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🗑 Delete Everything</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>

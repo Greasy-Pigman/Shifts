@@ -1,0 +1,17 @@
+{
+  "name": "Shift Tracker",
+  "short_name": "Shifts",
+  "description": "Yotam's waiter shift tracker",
+  "start_url": "/Shifts/",
+  "display": "standalone",
+  "background_color": "#0F1117",
+  "theme_color": "#0F1117",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Greasy-Pigman/Shifts/main/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
