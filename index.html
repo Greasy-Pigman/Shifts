@@ -1158,23 +1158,34 @@ function App(){
     setWeekSyncing(true);setWeekSyncMsg(null);
     let created=0,updated=0,errors=0;
     try{
-      const next=[...shifts];
+      const gcalUpdates={};
       for(const sh of valid){
         const ev=toGCal(sh);
         if(!ev){errors++;continue;}
         try{
           if(sh.gcalEventId){
-            await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
-            updated++;
+            try{
+              await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
+              updated++;
+            }catch(e){
+              if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
+                const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+                gcalUpdates[sh.id]=r.id;created++;
+              }else{errors++;}
+            }
           }else{
             const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-            const idx=next.findIndex(s=>s.id===sh.id);
-            if(idx!==-1)next[idx]={...next[idx],gcalEventId:r.id};
-            created++;
+            gcalUpdates[sh.id]=r.id;created++;
           }
         }catch{errors++;}
       }
-      await save(next);
+      if(Object.keys(gcalUpdates).length>0&&selWeek&&weekData[selWeek]){
+        const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s)};
+        setWeekData(prev=>({...prev,[selWeek]:updWData}));
+        await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
+      }
+      const nextMain=shifts.map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s);
+      if(nextMain.some((s,i)=>s!==shifts[i]))await save(nextMain);
       const parts=[];
       if(created)parts.push(`${created} created`);
       if(updated)parts.push(`${updated} updated`);
