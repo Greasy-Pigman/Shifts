@@ -228,6 +228,20 @@ function calcShiftPay(sh, priorHrs=0){
   const isPremium=(sh.shiftType==="Holiday"||sh.shiftType==="Shabbat"||!!holidayRate(sh.date))&&erevQualifies;
   if(isPremium){
     const rate=sh.shiftType==="Holiday"?HOLIDAY_R:holidayRate(sh.date)||SHABBAT_R;
+    // Shabbat rate only applies until 18:00; after 18:00 it drops to normal rate
+    if(sh.shiftType==="Shabbat"&&s&&e){
+      const startMin=toMin(s), endMin=toMin(e)+(sh.crossesMidnight?1440:0);
+      if(startMin<18*60&&endMin>18*60+10){
+        const mornHrs=Math.max(0,(18*60-startMin)/60);
+        const evenHrs=Math.max(0,(endMin-18*60)/60);
+        const mornTips=parseFloat(sh.morningTips)||0;
+        const evenTips=parseFloat(sh.eveningTips)||0;
+        const tips=parseFloat(sh.myTipCash)||(mornTips||evenTips?(mornTips+evenTips):0);
+        const base=+(SHABBAT_R*mornHrs+BASE_RATE*evenHrs).toFixed(2);
+        return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),wage:+(base-PENSION*hrs).toFixed(2),tips,
+          breakdown:{base,ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true,shabbatSplit:true,mornHrs:+mornHrs.toFixed(2),evenHrs:+evenHrs.toFixed(2)}};
+      }
+    }
     const tips=parseFloat(sh.myTipCash)||0;
     return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),wage:+(rate*hrs-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
   }
@@ -603,7 +617,7 @@ function toGCal(sh){
   const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:"[Shift]";
   const desc=[`${typeStr} ${sh.shiftType}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
   const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":"5";
-  return{summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+  return{summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -1706,11 +1720,12 @@ function App(){
                             const mTips=parseFloat(sh.morningTips||"");
                             const eTips=parseFloat(sh.eveningTips||"");
                             const totalTips=(!isNaN(mTips)?mTips:0)+(!isNaN(eTips)?eTips:0);
-                            const br=shiftBaseRate(sh);
+                            const mBr=shiftBaseRate(sh); // morning: 66 on Shabbat, 44 normal
+                            const eBr=sh.shiftType==="Shabbat"?BASE_RATE:mBr; // evening always normal after 18:00
                             const mTipsPerHr=(!isNaN(mTips)&&sh.morningTips!=="")&&mH>0?(mTips/mH):null;
                             const eTipsPerHr=(!isNaN(eTips)&&sh.eveningTips!=="")&&eH>0?(eTips/eH):null;
-                            const mHrlyDef=mTipsPerHr!=null?(br+mTipsPerHr).toFixed(2)+"₪/h":"";
-                            const eHrlyDef=eTipsPerHr!=null?(br+eTipsPerHr).toFixed(2)+"₪/h":"";
+                            const mHrlyDef=mTipsPerHr!=null?(mBr+mTipsPerHr).toFixed(2)+"₪/h":"";
+                            const eHrlyDef=eTipsPerHr!=null?(eBr+eTipsPerHr).toFixed(2)+"₪/h":"";
                             const mTipsDef=!isNaN(mTips)&&sh.morningTips!==""?mTips.toFixed(2):"";
                             const eTipsDef=!isNaN(eTips)&&sh.eveningTips!==""?eTips.toFixed(2):"";
                             return(<>
@@ -1728,7 +1743,7 @@ function App(){
                                         const v=+(raw).toFixed(2);
                                         upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
                                       }}/>
-                                    {mTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(br+mTipsPerHr).toFixed(2)}/h total</span>}
+                                    {mTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(mBr+mTipsPerHr).toFixed(2)}/h total</span>}
                                   </div>
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                     <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tips ₪</label>
@@ -1740,28 +1755,28 @@ function App(){
                                         const v=+(raw).toFixed(2);
                                         upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
                                       }}/>
-                                    {eTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(br+eTipsPerHr).toFixed(2)}/h total</span>}
+                                    {eTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(eBr+eTipsPerHr).toFixed(2)}/h total</span>}
                                   </div>
                                   {/* Row 2: ₪/H */}
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                     <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning ₪/H</label>
-                                    <input key={`sp_mh_${sh.id}_${sh.morningTips}`} style={inp()} placeholder={`₪${br}/h base`} defaultValue={mHrlyDef}
+                                    <input key={`sp_mh_${sh.id}_${sh.morningTips}`} style={inp()} placeholder={`₪${mBr}/h`} defaultValue={mHrlyDef}
                                       onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
                                       onBlur={e=>{
                                         const raw=parseFloat(e.target.value.replace("₪/h","").trim());
                                         if(isNaN(raw)||mH<=0){e.target.value=mHrlyDef;return;}
-                                        const v=+(Math.max(0,raw-br)*mH).toFixed(2);
+                                        const v=+(Math.max(0,raw-mBr)*mH).toFixed(2);
                                         upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
                                       }}/>
                                   </div>
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                     <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening ₪/H</label>
-                                    <input key={`sp_eh_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder={`₪${br}/h base`} defaultValue={eHrlyDef}
+                                    <input key={`sp_eh_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder={`₪${eBr}/h`} defaultValue={eHrlyDef}
                                       onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
                                       onBlur={e=>{
                                         const raw=parseFloat(e.target.value.replace("₪/h","").trim());
                                         if(isNaN(raw)||eH<=0){e.target.value=eHrlyDef;return;}
-                                        const v=+(Math.max(0,raw-br)*eH).toFixed(2);
+                                        const v=+(Math.max(0,raw-eBr)*eH).toFixed(2);
                                         upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
                                       }}/>
                                   </div>
