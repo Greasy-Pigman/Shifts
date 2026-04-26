@@ -1707,86 +1707,64 @@ function App(){
                             const eTips=parseFloat(sh.eveningTips||"");
                             const totalTips=(!isNaN(mTips)?mTips:0)+(!isNaN(eTips)?eTips:0);
                             const br=shiftBaseRate(sh);
+                            const mTipsPerHr=(!isNaN(mTips)&&sh.morningTips!=="")&&mH>0?(mTips/mH):null;
+                            const eTipsPerHr=(!isNaN(eTips)&&sh.eveningTips!=="")&&eH>0?(eTips/eH):null;
+                            const mHrlyDef=mTipsPerHr!=null?(br+mTipsPerHr).toFixed(2)+"₪/h":"";
+                            const eHrlyDef=eTipsPerHr!=null?(br+eTipsPerHr).toFixed(2)+"₪/h":"";
+                            const mTipsDef=!isNaN(mTips)&&sh.morningTips!==""?mTips.toFixed(2):"";
+                            const eTipsDef=!isNaN(eTips)&&sh.eveningTips!==""?eTips.toFixed(2):"";
                             return(<>
                               <div style={{gridColumn:"1 / -1",background:`${C.purple}08`,border:`1px solid ${C.purple}20`,borderRadius:7,padding:"8px 10px",marginTop:2}}>
                                 <div style={{fontSize:9,color:C.purple,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>⚡ Split Tip Pools ({mH.toFixed(1)}h morning + {eH.toFixed(1)}h evening)</div>
-                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                                  {/* MORNING PANEL */}
-                                  {(()=>{
-                                    const mTipsPerHr=(!isNaN(mTips)&&sh.morningTips!=="")&&mH>0?(mTips/mH):null;
-                                    const mTotal=mTipsPerHr!=null?(br+mTipsPerHr):null;
-                                    const mRateDisp=mTotal!=null?mTotal.toFixed(2):br.toFixed(2);
-                                    const mHrlyDef=mTotal!=null?mTotal.toFixed(2)+"₪/h":"";
-                                    const mTipsDef=!isNaN(mTips)&&sh.morningTips!==""?mTips.toFixed(2):"";
-                                    return(<div style={{background:`${C.yellow}08`,border:`1px solid ${C.yellow}20`,borderRadius:6,padding:"8px 10px",display:"flex",flexDirection:"column",gap:5}}>
-                                      <div style={{fontSize:9,color:C.yellow,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning — {mH.toFixed(1)}h</div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                                        <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:5,color:mTipsPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:11,fontFamily:mono}}>₪{mRateDisp}/h</div>
-                                        {mTipsPerHr!=null&&<span style={{fontSize:7,color:C.muted}}>₪{br.toFixed(2)} base + ₪{mTipsPerHr.toFixed(2)} tips</span>}
-                                      </div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
-                                        <input key={`sp_mh_${sh.id}_${sh.morningTips}`} style={inp({color:mTotal!=null?C.text:C.muted})} placeholder={`₪${br}/h`} defaultValue={mHrlyDef}
-                                          onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                          onBlur={e=>{
-                                            const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                            if(isNaN(raw)||mH<=0){e.target.value=mHrlyDef;return;}
-                                            const v=+(Math.max(0,raw-br)*mH).toFixed(2);
-                                            upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
-                                          }}/>
-                                      </div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
-                                        <input key={`sp_mt_${sh.id}_${sh.morningTips}`} style={inp({color:mTipsPerHr!=null?C.text:C.muted})} placeholder="0" defaultValue={mTipsDef}
-                                          onFocus={e=>{e.target.select();}}
-                                          onBlur={e=>{
-                                            const raw=parseFloat(e.target.value.trim());
-                                            if(isNaN(raw)){return;}
-                                            const v=+(raw).toFixed(2);
-                                            upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
-                                          }}/>
-                                      </div>
-                                    </div>);
-                                  })()}
-                                  {/* EVENING PANEL */}
-                                  {(()=>{
-                                    const eTipsPerHr=(!isNaN(eTips)&&sh.eveningTips!=="")&&eH>0?(eTips/eH):null;
-                                    const eTotal=eTipsPerHr!=null?(br+eTipsPerHr):null;
-                                    const eRateDisp=eTotal!=null?eTotal.toFixed(2):br.toFixed(2);
-                                    const eHrlyDef=eTotal!=null?eTotal.toFixed(2)+"₪/h":"";
-                                    const eTipsDef=!isNaN(eTips)&&sh.eveningTips!==""?eTips.toFixed(2):"";
-                                    return(<div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}20`,borderRadius:6,padding:"8px 10px",display:"flex",flexDirection:"column",gap:5}}>
-                                      <div style={{fontSize:9,color:C.acc,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening — {eH.toFixed(1)}h</div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                                        <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:5,color:eTipsPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:11,fontFamily:mono}}>₪{eRateDisp}/h</div>
-                                        {eTipsPerHr!=null&&<span style={{fontSize:7,color:C.muted}}>₪{br.toFixed(2)} base + ₪{eTipsPerHr.toFixed(2)} tips</span>}
-                                      </div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
-                                        <input key={`sp_eh_${sh.id}_${sh.eveningTips}`} style={inp({color:eTotal!=null?C.text:C.muted})} placeholder={`₪${br}/h`} defaultValue={eHrlyDef}
-                                          onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                          onBlur={e=>{
-                                            const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                            if(isNaN(raw)||eH<=0){e.target.value=eHrlyDef;return;}
-                                            const v=+(Math.max(0,raw-br)*eH).toFixed(2);
-                                            upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
-                                          }}/>
-                                      </div>
-                                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                        <label style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
-                                        <input key={`sp_et_${sh.id}_${sh.eveningTips}`} style={inp({color:eTipsPerHr!=null?C.text:C.muted})} placeholder="0" defaultValue={eTipsDef}
-                                          onFocus={e=>{e.target.select();}}
-                                          onBlur={e=>{
-                                            const raw=parseFloat(e.target.value.trim());
-                                            if(isNaN(raw)){return;}
-                                            const v=+(raw).toFixed(2);
-                                            upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
-                                          }}/>
-                                      </div>
-                                    </div>);
-                                  })()}
+                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                                  {/* Row 1: Tips ₪ */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tips ₪</label>
+                                    <input key={`sp_mt_${sh.id}_${sh.morningTips}`} style={inp()} placeholder="0" defaultValue={mTipsDef}
+                                      onFocus={e=>{e.target.select();}}
+                                      onBlur={e=>{
+                                        const raw=parseFloat(e.target.value.trim());
+                                        if(isNaN(raw)){return;}
+                                        const v=+(raw).toFixed(2);
+                                        upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
+                                      }}/>
+                                    {mTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(br+mTipsPerHr).toFixed(2)}/h total</span>}
+                                  </div>
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tips ₪</label>
+                                    <input key={`sp_et_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder="0" defaultValue={eTipsDef}
+                                      onFocus={e=>{e.target.select();}}
+                                      onBlur={e=>{
+                                        const raw=parseFloat(e.target.value.trim());
+                                        if(isNaN(raw)){return;}
+                                        const v=+(raw).toFixed(2);
+                                        upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
+                                      }}/>
+                                    {eTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(br+eTipsPerHr).toFixed(2)}/h total</span>}
+                                  </div>
+                                  {/* Row 2: ₪/H */}
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning ₪/H</label>
+                                    <input key={`sp_mh_${sh.id}_${sh.morningTips}`} style={inp()} placeholder={`₪${br}/h base`} defaultValue={mHrlyDef}
+                                      onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
+                                      onBlur={e=>{
+                                        const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                                        if(isNaN(raw)||mH<=0){e.target.value=mHrlyDef;return;}
+                                        const v=+(Math.max(0,raw-br)*mH).toFixed(2);
+                                        upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
+                                      }}/>
+                                  </div>
+                                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening ₪/H</label>
+                                    <input key={`sp_eh_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder={`₪${br}/h base`} defaultValue={eHrlyDef}
+                                      onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
+                                      onBlur={e=>{
+                                        const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                                        if(isNaN(raw)||eH<=0){e.target.value=eHrlyDef;return;}
+                                        const v=+(Math.max(0,raw-br)*eH).toFixed(2);
+                                        upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
+                                      }}/>
+                                  </div>
                                 </div>
                                 {totalTips>0&&(
                                   <div style={{fontSize:10,color:C.purple,fontWeight:700,marginTop:6,display:"flex",gap:8,alignItems:"center"}}>
