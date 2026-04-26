@@ -614,10 +614,13 @@ function toGCal(sh){
   else eD=new Date(sD.getTime()+6*3600000);
   const pay=calcPay(sh),status=shiftStatus(sh);
   const hol=getHoliday(sh.date);
-  const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:"[Shift]";
-  const desc=[`${typeStr} ${sh.shiftType}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
-  const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":"5";
-  return{summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+  const stH2=st.h,etH2=parseT(sh.endTime)?.h??0,etM2=parseT(sh.endTime)?.m??0;
+  const isDouble=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>10));
+  const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:isDouble?"[Double]":"[Shift]";
+  const shiftLabel=isDouble?"Double Shift":sh.shiftType;
+  const desc=[`${typeStr} ${shiftLabel}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
+  const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":isDouble?"6":"5";
+  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -1209,8 +1212,11 @@ function App(){
     const pad=n=>String(n).padStart(2,"0");
     const fmt=dt=>`${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
     const hol=getHoliday(sh.date);
-    const title=encodeURIComponent(`[${sh.shiftType}] Shift${pay?` - ${pay.net} net`:""}`);
-    const details=encodeURIComponent([`Shift: ${sh.shiftType}`,`Hours: ${shiftHrsNum(sh)||"?"}h`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n"));
+    const stH3=st.h,etH3=parseT(sh.endTime)?.h??0,etM3=parseT(sh.endTime)?.m??0;
+    const isDbl=sh.endTime&&stH3<18&&(sh.crossesMidnight||etH3>18||(etH3===18&&etM3>10));
+    const lbl=isDbl?"Double Shift":sh.shiftType;
+    const title=encodeURIComponent(`[${isDbl?"Double":sh.shiftType}] ${lbl}${pay?` - ${pay.net} net`:""}`);
+    const details=encodeURIComponent([`Shift: ${lbl}`,`Hours: ${shiftHrsNum(sh)||"?"}h`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n"));
     const dates=`${fmt(sD)}/${fmt(eD)}`;
     return `https://calendar.google.com/calendar/r/eventedit?text=${title}&dates=${dates}&details=${details}&sf=true`;
   }
