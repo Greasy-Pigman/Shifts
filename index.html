@@ -998,6 +998,8 @@ function App(){
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [weekSyncing, setWeekSyncing] = useState(false);
   const [weekSyncMsg, setWeekSyncMsg] = useState(null);
+  const [weekDeleting, setWeekDeleting] = useState(false);
+  const [weekDeleteMsg, setWeekDeleteMsg] = useState(null);
   const [archiveEditMode, setArchiveEditMode] = useState(false);
 
   async function doReset(){
@@ -1197,6 +1199,37 @@ function App(){
       setWeekSyncMsg({ok:false,text:`Sync failed: ${e.message}`});
     }finally{
       setWeekSyncing(false);
+    }
+  }
+
+  async function deleteWeekFromGCal(weekShifts){
+    if(!token){setWeekDeleteMsg({ok:false,text:"Sign in to Google first"});return;}
+    const withId=weekShifts.filter(sh=>sh.gcalEventId);
+    if(!withId.length){setWeekDeleteMsg({ok:false,text:"No synced events to delete"});return;}
+    setWeekDeleting(true);setWeekDeleteMsg(null);
+    let deleted=0,errors=0;
+    try{
+      const cleared={};
+      for(const sh of withId){
+        try{
+          await gcReq(token,"DELETE",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`);
+          cleared[sh.id]=true;deleted++;
+        }catch(e){
+          if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
+            cleared[sh.id]=true;deleted++;
+          }else{errors++;}
+        }
+      }
+      if(Object.keys(cleared).length>0&&selWeek&&weekData[selWeek]){
+        const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>cleared[s.id]?{...s,gcalEventId:null}:s)};
+        setWeekData(prev=>({...prev,[selWeek]:updWData}));
+        await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
+      }
+      setWeekDeleteMsg({ok:errors===0,text:`🗑 ${deleted} deleted${errors?`, ${errors} failed`:""}`});
+    }catch(e){
+      setWeekDeleteMsg({ok:false,text:`Delete failed: ${e.message}`});
+    }finally{
+      setWeekDeleting(false);
     }
   }
 
@@ -2037,10 +2070,16 @@ function App(){
                         </div>}
                         {token&&(
                           <div style={{display:"flex",flexDirection:"column",gap:4,justifyContent:"center"}}>
-                            <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 12px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:5}}>
-                              {weekSyncing?"Syncing...":"Sync week to Google Cal"}
-                            </button>
+                            <div style={{display:"flex",gap:4}}>
+                              <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||weekDeleting||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
+                                {weekSyncing?"Syncing...":"↑ Sync Week"}
+                              </button>
+                              <button onClick={()=>deleteWeekFromGCal(selData?.myShifts||[])} disabled={weekDeleting||weekSyncing||(selData?.myShifts||[]).filter(s=>s.gcalEventId).length===0} style={{background:weekDeleting?C.dim:`${C.red}18`,border:`1px solid ${C.red}40`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
+                                {weekDeleting?"Deleting...":"🗑 Delete from GCal"}
+                              </button>
+                            </div>
                             {weekSyncMsg&&<div style={{fontSize:9,color:weekSyncMsg.ok?C.green:C.yellow,marginTop:2}}>{weekSyncMsg.text}</div>}
+                            {weekDeleteMsg&&<div style={{fontSize:9,color:weekDeleteMsg.ok?C.green:C.yellow,marginTop:2}}>{weekDeleteMsg.text}</div>}
                           </div>
                         )}
                         <button onClick={() => setArchiveEditMode(v => !v)} style={{background: archiveEditMode ? `${C.green}25` : `${C.acc}18`, border: `1px solid ${archiveEditMode ? C.green : C.acc}50`, borderRadius: 7, color: archiveEditMode ? C.green : C.acc, padding: "7px 12px", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: mono}}>
