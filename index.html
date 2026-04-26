@@ -1382,8 +1382,8 @@ function App(){
             {/* Messages */}
             {gcMsg&&<div style={{background:gcMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${gcMsg.ok?C.green:C.red}30`,borderRadius:8,padding:"9px 13px",fontSize:11,color:gcMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12}}><span style={{flex:1}}>{gcMsg.text}</span><button onClick={()=>setGcMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
 
-            {/* Not connected */}
-            <div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}30`,borderLeft:`3px solid ${C.acc}`,borderRadius:9,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>📅 Google Calendar</div><div style={{fontSize:10,color:C.muted}}>Tap <strong style={{color:C.text}}>Export Calendar (.ics)</strong> → copy the text → save as <strong style={{color:C.text}}>shifts.ics</strong> → open in Google Calendar.</div></div>
+            {/* Google Calendar info */}
+            <div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}30`,borderLeft:`3px solid ${C.acc}`,borderRadius:9,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>📅 Google Calendar</div><div style={{fontSize:10,color:C.muted}}>{token?<>Use <strong style={{color:C.text}}>Sync week</strong> in the Archive tab to push shifts directly to your selected calendar.</>:"Sign in with Google above to sync shifts directly to your calendar."}</div></div>
 
             {/* Notifications — collapsed summary with expand */}
             {notifs.length>0&&(()=>{
