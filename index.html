@@ -852,7 +852,7 @@ function App(){
     fetchCalendars(t);
   }
 
-  function buildAuthUrl(){const redirectUri=window.location.href.split('#')[0].replace(/\/$/,'');const p=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:redirectUri,response_type:"token",scope:SCOPES,prompt:"consent"});return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;}
+  function buildAuthUrl(){const redirectUri=window.location.href.split('#')[0];const p=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:redirectUri,response_type:"token",scope:SCOPES,prompt:"consent"});return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;}
   function signIn(){
     const url=buildAuthUrl();
     // Try opening in new tab — on mobile Claude app may intercept
