@@ -1287,6 +1287,44 @@ function App(){
         }catch{}
       }
       await save(next);
+      // Sync all archive week shifts (so old "[Normal]" events get renamed to "[Double]"/holiday etc.)
+      const weekGcalUpdates={};
+      for(const [wKey,wData] of Object.entries(weekData)){
+        if(!wData?.myShifts?.length) continue;
+        const wUpdates={};
+        for(const sh of wData.myShifts){
+          const ev=toGCal(sh);
+          if(!ev) continue;
+          try{
+            if(sh.gcalEventId){
+              try{
+                await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
+                updated++;
+              }catch(e){
+                if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
+                  const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+                  wUpdates[sh.id]=r.id;created++;
+                }else{errors++;lastErr=e.message;}
+              }
+            }else{
+              const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+              wUpdates[sh.id]=r.id;created++;
+            }
+          }catch(e){errors++;lastErr=e.message;}
+        }
+        if(Object.keys(wUpdates).length>0) weekGcalUpdates[wKey]=wUpdates;
+      }
+      if(Object.keys(weekGcalUpdates).length>0){
+        const updWD={...weekData};
+        for(const [wKey,wUpdates] of Object.entries(weekGcalUpdates)){
+          const wd=updWD[wKey];
+          if(wd){
+            updWD[wKey]={...wd,myShifts:(wd.myShifts||[]).map(s=>wUpdates[s.id]?{...s,gcalEventId:wUpdates[s.id]}:s)};
+            await window.storage.set(WEEK_PFX+wKey,JSON.stringify(updWD[wKey])).catch(()=>{});
+          }
+        }
+        setWeekData(updWD);
+      }
       const parts=[`✓ ${created} created, ${updated} updated`];
       if(errors)parts.push(`${errors} failed${lastErr?` (${lastErr.slice(0,50)})`:""}`);
       if(holidaysAdded)parts.push(`${holidaysAdded} holidays added`);
