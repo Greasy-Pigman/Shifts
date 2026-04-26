@@ -1075,16 +1075,40 @@ function App(){
   }
 
   // ── Google Calendar sync ──
-  function syncWeek(weekShifts){
-    // Google API is blocked in sandboxed iframe — open each shift as a Google Cal event link
-    // User reviews and saves each one in Google Calendar
+  async function syncWeek(weekShifts){
+    if(!token){setWeekSyncMsg({ok:false,text:"Sign in to Google first"});return;}
     const valid=weekShifts.filter(sh=>sh.date&&sh.startTime);
     if(!valid.length){setWeekSyncMsg({ok:false,text:"No shifts to sync"});return;}
-    valid.forEach((sh,i)=>{
-      // Stagger opens so browser doesn't block them as popups
-      setTimeout(()=>window.open(buildGCalUrl(sh),"_blank"), i*400);
-    });
-    setWeekSyncMsg({ok:true,text:`Opened ${valid.length} shift${valid.length>1?"s":""} in Google Calendar — tap Save on each one`});
+    setWeekSyncing(true);setWeekSyncMsg(null);
+    let created=0,updated=0,errors=0;
+    try{
+      const next=[...shifts];
+      for(const sh of valid){
+        const ev=toGCal(sh);
+        if(!ev){errors++;continue;}
+        try{
+          if(sh.gcalEventId){
+            await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
+            updated++;
+          }else{
+            const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+            const idx=next.findIndex(s=>s.id===sh.id);
+            if(idx!==-1)next[idx]={...next[idx],gcalEventId:r.id};
+            created++;
+          }
+        }catch{errors++;}
+      }
+      await save(next);
+      const parts=[];
+      if(created)parts.push(`${created} created`);
+      if(updated)parts.push(`${updated} updated`);
+      if(errors)parts.push(`${errors} failed`);
+      setWeekSyncMsg({ok:errors===0,text:`✓ ${parts.join(", ")}`});
+    }catch(e){
+      setWeekSyncMsg({ok:false,text:`Sync failed: ${e.message}`});
+    }finally{
+      setWeekSyncing(false);
+    }
   }
 
   function buildGCalUrl(sh){
@@ -1285,7 +1309,7 @@ function App(){
           {token?(
             <>
               {badg(C.green,"🔗 "+(email||"Connected"))}
-              {calendars.length>0&&<select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:130}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"💼 "+cal.name}</option>))}</select>}
+              {calendars.length>0&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.muted}}>Cal:</span><select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:140}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"📅 "+cal.name}</option>))}</select></div>}
               <button onClick={exportICS} style={{background:`linear-gradient(135deg,${C.acc},#7C3AED)`,border:"none",borderRadius:8,color:"#fff",padding:"8px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
                 📅 Export Calendar (.ics)
               </button>
@@ -1525,7 +1549,6 @@ function App(){
                         {!isDouble&&<span style={{fontSize:12,fontWeight:700,fontFamily:sans}}>{fmtDate(sh.date)}</span>}
                         {synced&&badg(C.green,"📅")}
                         <div style={{marginLeft:"auto",display:"flex",gap:5}}>
-                          <button onClick={()=>window.open(buildGCalUrl(sh),"_blank")} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>+ Cal</button>
                           {!sh.resolved&&<button onClick={()=>upd(sh.id,{flagged:!sh.flagged,resolved:false})} style={{background:sh.flagged?`${C.red}25`:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{sh.flagged?"⚑ Flagged":"⚐ Flag"}</button>}
                           {sh.flagged&&<button onClick={()=>upd(sh.id,{resolved:true,flagged:false})} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✓ Resolve</button>}
                           {deleteConfirmId===sh.id?(
