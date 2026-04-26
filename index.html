@@ -228,7 +228,7 @@ function calcShiftPay(sh, priorHrs=0){
   if(isPremium){
     const rate=sh.shiftType==="Holiday"?HOLIDAY_R:holidayRate(sh.date)||SHABBAT_R;
     const tips=parseFloat(sh.myTipCash)||0;
-    return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
+    return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),wage:+(rate*hrs-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
   }
   // Regular/OT calculation
   const night=isNightShift(sh.startTime,sh.endTime,sh.crossesMidnight);
@@ -240,7 +240,7 @@ function calcShiftPay(sh, priorHrs=0){
   const ot2Hrs=Math.max(0,hrs-regHrs-ot1Hrs);                        // 150% hours
   const base=regHrs*BASE_RATE + ot1Hrs*BASE_RATE*1.25 + ot2Hrs*BASE_RATE*1.5;
   const tips=parseFloat(sh.myTipCash)||0;
-  return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),tips,
+  return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),wage:+(base-PENSION*hrs).toFixed(2),tips,
     breakdown:{base:+base.toFixed(2),ot1:+(ot1Hrs*BASE_RATE*1.25).toFixed(2),ot2:+(ot2Hrs*BASE_RATE*1.5).toFixed(2),
       reg:+regHrs.toFixed(2),otHrs1:+ot1Hrs.toFixed(2),otHrs2:+ot2Hrs.toFixed(2),threshold:thresh,isNight:night,isPremium:false}};
 }
@@ -1233,6 +1233,8 @@ function App(){
   const confirmed=shifts.filter(s=>shiftStatus(s)==="confirmed");
   const totalHrs=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.hrs||0);},0);
   const totalNet=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.net||0);},0);
+  const totalWage=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.wage||0);},0);
+  const totalTipsConf=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.tips||0);},0);
   const openCount=shifts.filter(s=>(!s.endTime&&!s.resolved)||( s.flagged&&!s.resolved)).length;
   const futureCount=shifts.filter(s=>shiftStatus(s)==="future").length;
   const syncedCount=shifts.filter(s=>s.gcalEventId).length;
@@ -1425,7 +1427,7 @@ function App(){
             {/* Summary */}
             {shifts.length>0&&!editingShift&&(
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:13}}>
-                {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[openCount>0?`${openCount} open`:"Clear","Unresolved",openCount>0?C.red:C.green],[`₪${Math.round(totalNet).toLocaleString()}`,"Net Est.",C.green]].map(([v,l,c])=>(
+                {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[`₪${Math.round(totalWage).toLocaleString()}`,"Paycheck",C.green],[`₪${Math.round(totalTipsConf).toLocaleString()}`,"Tips",C.purple]].map(([v,l,c])=>(
                   <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 7px",textAlign:"center"}}><div style={{fontSize:17,fontWeight:700,color:c,marginBottom:1}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
                 ))}
               </div>
@@ -1481,7 +1483,7 @@ function App(){
                   // Total day stats for double shift header
                   const totalHrs=dayShifts.reduce((s,s2)=>s+(shiftHrsNum(s2)||0),0);
                   const totalNet=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.net||0);},0);
-                  const totalGross=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.gross||0);},0);
+                  const totalWageDay=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.wage||0);},0);
                   const totalTips=dayShifts.reduce((s,s2)=>s+(parseFloat(s2.myTipCash)||0),0);
                   const hasNight=dayShifts.some(s2=>isNightShift(s2.startTime,s2.endTime,s2.crossesMidnight));
                   const shiftLabel=isDouble?(sh.doubleShiftIdx===0?"☀ Morning":"🌙 Evening"):"";
@@ -1494,10 +1496,13 @@ function App(){
                         <span style={{fontSize:9,color:C.muted}}>{totalHrs.toFixed(1)}h total</span>
                         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
                           <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:6,padding:"3px 10px",textAlign:"center"}}>
-                            <div style={{fontSize:14,fontWeight:700,color:C.green}}>₪{totalNet.toFixed(0)}</div>
-                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Day Net</div>
+                            <div style={{fontSize:14,fontWeight:700,color:C.green}}>₪{totalWageDay.toFixed(0)}</div>
+                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Paycheck</div>
                           </div>
-                          <span style={{fontSize:10,color:C.muted}}>₪{totalGross.toFixed(0)} gross</span>
+                          {totalTips>0&&<div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:6,padding:"3px 10px",textAlign:"center"}}>
+                            <div style={{fontSize:14,fontWeight:700,color:C.purple}}>₪{totalTips.toFixed(0)}</div>
+                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Tips</div>
+                          </div>}
                           {totalTips>0&&<span style={{fontSize:10,color:C.purple}}>₪{totalTips} tips</span>}
                         </div>
                       </div>
@@ -1544,12 +1549,17 @@ function App(){
                             const bd=pay.breakdown;
                             return(<>
                               <div style={{background:`${boxColor}15`,border:`1px solid ${boxColor}30`,borderRadius:8,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:80}}>
-                                <span style={{fontSize:16,fontWeight:700,color:boxColor,letterSpacing:"-0.5px"}}>₪{pay.net}</span>
-                                <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isConf?"Net":"Est. Net"}</span>
+                                <span style={{fontSize:16,fontWeight:700,color:boxColor,letterSpacing:"-0.5px"}}>₪{pay.wage}</span>
+                                <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isConf?"Paycheck":"Est. Pay"}</span>
                               </div>
+                              {pay.tips>0&&(
+                                <div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:8,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:70}}>
+                                  <span style={{fontSize:16,fontWeight:700,color:C.purple,letterSpacing:"-0.5px"}}>₪{pay.tips}</span>
+                                  <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips</span>
+                                </div>
+                              )}
                               <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                <span style={{fontSize:10,color:C.muted}}>₪{pay.gross} gross · {pay.hrs}h</span>
-                                {pay.tips>0&&<span style={{fontSize:10,color:C.purple}}>₪{pay.tips} tips</span>}
+                                <span style={{fontSize:10,color:C.muted}}>{pay.hrs}h</span>
                                 {bd&&!bd.isPremium&&(bd.otHrs1>0||bd.otHrs2>0)&&(
                                   <span style={{fontSize:9,color:C.acc}}>
                                     {bd.reg.toFixed(1)}h×₪{BASE_RATE}
@@ -1558,7 +1568,7 @@ function App(){
                                     {bd.isNight?" 🌙":""}
                                   </span>
                                 )}
-                                {sh.isDoubleShift&&sh.priorDayHrs>0&&<span style={{fontSize:9,color:C.purple}}>+{sh.priorDayHrs}h carried from earlier shift</span>}
+                                {sh.isDoubleShift&&sh.priorDayHrs>0&&<span style={{fontSize:9,color:C.purple}}>+{sh.priorDayHrs}h carried</span>}
                               </div>
                             </>);
                           })()}
@@ -1861,20 +1871,19 @@ function App(){
                     </div>
                   </div>
                   {(()=>{
-                    const weekNet=(selData.myShifts||[]).reduce((sum,sh)=>{
-                      const s=parseT(sh.startTime),e=parseT(sh.endTime);
-                      const hrs=shiftHrs(s,e,sh.crossesMidnight);if(!hrs)return sum;
-                      const _p=calcShiftPay(sh,sh.priorDayHrs||0);
-                      const base=_p?_p.gross-(parseFloat(sh.myTipCash)||0):0;
-                      const tips=parseFloat(sh.myTipCash)||0;
-                      return sum+(base+tips-PENSION*hrs);
-                    },0);
+                    const weekWage=(selData.myShifts||[]).reduce((sum,sh)=>{const _p=calcShiftPay(sh,sh.priorDayHrs||0);return sum+(_p?.wage||0);},0);
+                    const weekTips=(selData.myShifts||[]).reduce((sum,sh)=>sum+(parseFloat(sh.myTipCash)||0),0);
+                    const weekNet=weekWage+weekTips;
                     return(
                       <div style={{display:"flex",gap:10,marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,flexWrap:"wrap",alignItems:"center"}}>
                         <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:8,padding:"8px 14px",textAlign:"center",minWidth:90}}>
-                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(weekNet).toLocaleString()}</div>
-                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Week Net</div>
+                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(weekWage).toLocaleString()}</div>
+                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Paycheck</div>
                         </div>
+                        {weekTips>0&&<div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:8,padding:"8px 14px",textAlign:"center",minWidth:90}}>
+                          <div style={{fontSize:18,fontWeight:700,color:C.purple,letterSpacing:"-0.5px"}}>₪{Math.round(weekTips).toLocaleString()}</div>
+                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips</div>
+                        </div>}
                         {token&&(
                           <div style={{display:"flex",flexDirection:"column",gap:4,justifyContent:"center"}}>
                             <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 12px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:5}}>
@@ -1918,28 +1927,39 @@ function App(){
                         {shiftHrsNum(sh)&&<span style={{fontSize:9,color:C.muted,marginLeft:6}}>{shiftHrsNum(sh)}h</span>}
                       </div>
                       {(()=>{
-                        const hrs=shiftHrsNum(sh);
-                        if(!hrs)return null;
                         const _p2=calcShiftPay(sh,sh.priorDayHrs||0);
-                        const base=_p2?_p2.gross-(parseFloat(sh.myTipCash)||0):0;
+                        if(!_p2)return null;
                         const tips=parseFloat(sh.myTipCash)||0;
-                        const net=+(base+tips-PENSION*hrs).toFixed(0);
-                        return <span style={{fontSize:12,fontWeight:700,color:C.green}}>₪{net}</span>;
+                        return(<>
+                          <span style={{fontSize:12,fontWeight:700,color:C.green}}>₪{_p2.wage.toFixed(0)}</span>
+                          {tips>0&&<span style={{fontSize:11,fontWeight:700,color:C.purple}}>+₪{tips.toFixed(0)} tips</span>}
+                        </>);
                       })()}
                     </div>
                   {archiveEditMode&&(
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>End Time</label>
-                        <input style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.endTime??""} placeholder="HH:MM" onBlur={e=>{const v=e.target.value.trim();if(v)updArchive(selWeek,sh.id,{endTime:v});}}/>
+                        <label style={{fontSize:9,color:!sh.endTime?C.red:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{!sh.endTime?"⚠ ":""}End Time</label>
+                        <input style={{background:C.surface,border:`1px solid ${!sh.endTime?"#EF444440":C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.endTime??""} placeholder="HH:MM" onBlur={e=>{const v=e.target.value.trim();if(v)updArchive(selWeek,sh.id,{endTime:v});}}/>
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips ₪</label>
-                        <input style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.myTipCash??""} placeholder="0" onBlur={e=>updArchive(selWeek,sh.id,{myTipCash:e.target.value.trim()})}/>
+                        <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tip ₪/h</label>
+                        {(()=>{
+                          const segHrs=shiftHrsNum(sh)||0;
+                          const segPay=calcShiftPay(sh,sh.priorDayHrs||0);
+                          const tipsCash=parseFloat(sh.myTipCash||"");
+                          const basePerHr=segPay&&segHrs>0?((segPay.gross-(isNaN(tipsCash)?0:tipsCash))/segHrs):null;
+                          const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
+                          const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
+                          const effectiveDisplay=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"";
+                          return(<input key={`a_hrly_${sh.id}_${sh.myTipCash}`} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} placeholder={basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"₪/h"} defaultValue={effectiveDisplay}
+                            onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
+                            onBlur={e=>{const raw=parseFloat(e.target.value.replace("₪/h","").trim());if(isNaN(raw)||segHrs<=0){e.target.value=effectiveDisplay;return;}const br=basePerHr||shiftBaseRate(sh);const tipRate=raw>br?raw-br:raw;const tipTotal=+(tipRate*segHrs).toFixed(2);updArchive(selWeek,sh.id,{myTipCash:tipTotal+""});if(!isNaN(raw))e.target.value=raw.toFixed(2)+"₪/h";}}/>);
+                        })()}
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:3,gridColumn:"1 / -1"}}>
-                        <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Notes</label>
-                        <input style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.notes??""} placeholder="optional" onBlur={e=>updArchive(selWeek,sh.id,{notes:e.target.value})}/>
+                        <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips ₪ (cash)</label>
+                        <input style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.myTipCash??""} placeholder="0" onBlur={e=>updArchive(selWeek,sh.id,{myTipCash:e.target.value.trim()})}/>
                       </div>
                     </div>
                   )}
