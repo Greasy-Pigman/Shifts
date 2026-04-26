@@ -603,7 +603,7 @@ function toGCal(sh){
   const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:"[Shift]";
   const desc=[`${typeStr} ${sh.shiftType}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
   const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":"5";
-  return{id:shiftGCalId(sh),summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+  return{summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -1153,21 +1153,10 @@ function App(){
             await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
             updated++;
           }else{
-            try{
-              const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-              const idx=next.findIndex(s=>s.id===sh.id);
-              if(idx!==-1)next[idx]={...next[idx],gcalEventId:r.id};
-              created++;
-            }catch(postErr){
-              if(postErr.message?.includes("409")){
-                // ID already exists from a previous partial sync — update it instead
-                const gid=shiftGCalId(sh);
-                await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${gid}`,ev);
-                const idx=next.findIndex(s=>s.id===sh.id);
-                if(idx!==-1)next[idx]={...next[idx],gcalEventId:gid};
-                updated++;
-              }else throw postErr;
-            }
+            const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
+            const idx=next.findIndex(s=>s.id===sh.id);
+            if(idx!==-1)next[idx]={...next[idx],gcalEventId:r.id};
+            created++;
           }
         }catch{errors++;}
       }
@@ -1647,6 +1636,15 @@ function App(){
                           const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
                           const tipsDefaultVal=!isNaN(tipsCash)&&sh.myTipCash!==""?tipsCash.toFixed(2):"";
                           const effectiveBase=basePerHr||baseRate;
+                          // For double shifts DoubleTipField renders the editable inputs below
+                          if(isDouble) return(
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
+                              <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>₪{displayRate}/h</div>
+                              {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
+                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
+                            </div>
+                          );
                           return(<>
                             {/* Col 2: read-only ₪/h display */}
                             <div style={{display:"flex",flexDirection:"column",gap:3}}>
