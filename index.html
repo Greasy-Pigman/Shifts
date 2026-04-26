@@ -1589,14 +1589,9 @@ function App(){
                           const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
                           const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
                           const displayRate=totalPerHr!=null?totalPerHr.toFixed(2):baseRate.toFixed(2);
-                          const effectiveDisplay=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"";
-                          const handleHourlyBlur=e=>{
-                            const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                            if(isNaN(raw)||segHrs<=0){e.target.value=effectiveDisplay;return;}
-                            const effectiveBase=basePerHr||baseRate;
-                            const tipRate=raw>effectiveBase?raw-effectiveBase:raw;
-                            upd(sh.id,{myTipCash:+(tipRate*segHrs).toFixed(2)+""});
-                          };
+                          const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
+                          const tipsDefaultVal=!isNaN(tipsCash)&&sh.myTipCash!==""?tipsCash.toFixed(2):"";
+                          const effectiveBase=basePerHr||baseRate;
                           return(<>
                             {/* Col 2: read-only ₪/h display */}
                             <div style={{display:"flex",flexDirection:"column",gap:3}}>
@@ -1605,18 +1600,39 @@ function App(){
                                 ₪{displayRate}/h
                               </div>
                               {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate — enter below to add tips</span>}
+                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
                             </div>
-                            {/* Full-width editable ₪/h input */}
-                            <div style={{display:"flex",flexDirection:"column",gap:3,gridColumn:"1 / -1"}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Enter total ₪/h received (incl. tips) — or enter total tips ₪</label>
+                            {/* Row 2 col 1: Total ₪/h received */}
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
                               <input
                                 key={`hrly_${sh.id}_${sh.myTipCash}`}
                                 style={inp({color:totalPerHr!=null?C.text:C.muted})}
-                                placeholder={`₪${baseRate}/h base — type e.g. 62 (total ₪/h) or 45 (tips total)`}
-                                defaultValue={effectiveDisplay}
+                                placeholder={`₪${baseRate}/h`}
+                                defaultValue={hrlyDefaultVal}
                                 onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                onBlur={e=>{handleHourlyBlur(e);const raw=parseFloat(e.target.value);if(!isNaN(raw))e.target.value=raw.toFixed(2)+"₪/h";}}
+                                onBlur={e=>{
+                                  const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                                  if(isNaN(raw)||segHrs<=0){e.target.value=hrlyDefaultVal;return;}
+                                  const tipRate=raw>effectiveBase?raw-effectiveBase:0;
+                                  upd(sh.id,{myTipCash:+(tipRate*segHrs).toFixed(2)+""});
+                                }}
+                              />
+                            </div>
+                            {/* Row 2 col 2: Total Tips ₪ */}
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
+                              <input
+                                key={`tips_${sh.id}_${sh.myTipCash}`}
+                                style={inp({color:tipsPerHr!=null?C.text:C.muted})}
+                                placeholder="0"
+                                defaultValue={tipsDefaultVal}
+                                onFocus={e=>{e.target.select();}}
+                                onBlur={e=>{
+                                  const raw=parseFloat(e.target.value.trim());
+                                  if(isNaN(raw)){return;}
+                                  upd(sh.id,{myTipCash:+(raw).toFixed(2)+""});
+                                }}
                               />
                             </div>
                           </>);
@@ -1941,15 +1957,9 @@ function App(){
                         const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
                         const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
                         const displayRate=totalPerHr!=null?totalPerHr.toFixed(2):baseRate.toFixed(2);
-                        const effectiveDisplay=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"";
-                        const handleHourlyBlur=e=>{
-                          const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                          if(isNaN(raw)||segHrs<=0){e.target.value=effectiveDisplay;return;}
-                          const effectiveBase=basePerHr||baseRate;
-                          const tipRate=raw>effectiveBase?raw-effectiveBase:raw;
-                          const tipTotal=+(tipRate*segHrs).toFixed(2);
-                          updArchive(selWeek,sh.id,{myTipCash:tipTotal+""});
-                        };
+                        const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
+                        const tipsDefaultVal=!isNaN(tipsCash)&&sh.myTipCash!==""?tipsCash.toFixed(2):"";
+                        const effectiveBase=basePerHr||baseRate;
                         return(<>
                           <div style={{display:"flex",flexDirection:"column",gap:3}}>
                             <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
@@ -1957,17 +1967,37 @@ function App(){
                               ₪{displayRate}/h
                             </div>
                             {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                            {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate — enter below to add tips</span>}
+                            {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
                           </div>
-                          <div style={{display:"flex",flexDirection:"column",gap:3,gridColumn:"1 / -1"}}>
-                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Enter total ₪/h received (incl. tips) — or enter total tips ₪</label>
+                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
                             <input
                               key={`a_hrly_${sh.id}_${sh.myTipCash}`}
                               style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:totalPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}}
-                              placeholder={`₪${baseRate}/h base — type e.g. 62 (total ₪/h) or 45 (tips total)`}
-                              defaultValue={effectiveDisplay}
+                              placeholder={`₪${baseRate}/h`}
+                              defaultValue={hrlyDefaultVal}
                               onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                              onBlur={e=>{handleHourlyBlur(e);const raw=parseFloat(e.target.value);if(!isNaN(raw))e.target.value=raw.toFixed(2)+"₪/h";}}
+                              onBlur={e=>{
+                                const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                                if(isNaN(raw)||segHrs<=0){e.target.value=hrlyDefaultVal;return;}
+                                const tipRate=raw>effectiveBase?raw-effectiveBase:0;
+                                updArchive(selWeek,sh.id,{myTipCash:+(tipRate*segHrs).toFixed(2)+""});
+                              }}
+                            />
+                          </div>
+                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
+                            <input
+                              key={`a_tips_${sh.id}_${sh.myTipCash}`}
+                              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}}
+                              placeholder="0"
+                              defaultValue={tipsDefaultVal}
+                              onFocus={e=>{e.target.select();}}
+                              onBlur={e=>{
+                                const raw=parseFloat(e.target.value.trim());
+                                if(isNaN(raw)){return;}
+                                updArchive(selWeek,sh.id,{myTipCash:+(raw).toFixed(2)+""});
+                              }}
                             />
                           </div>
                         </>);
