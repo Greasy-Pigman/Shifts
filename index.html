@@ -612,15 +612,14 @@ function toGCal(sh){
   const sD=new Date(yr,mo-1,dy,st.h,st.m);let eD;
   if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(yr,mo-1,dy,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
   else eD=new Date(sD.getTime()+6*3600000);
-  const pay=calcPay(sh),status=shiftStatus(sh);
+  const pay=calcPay(sh);
   const hol=getHoliday(sh.date);
   const stH2=st.h,etH2=parseT(sh.endTime)?.h??0,etM2=parseT(sh.endTime)?.m??0;
   const isDouble=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>10));
   const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:isDouble?"[Double]":"[Shift]";
   const shiftLabel=isDouble?"Double Shift":sh.shiftType;
   const desc=[`${typeStr} ${shiftLabel}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
-  const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":isDouble?"6":"5";
-  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
