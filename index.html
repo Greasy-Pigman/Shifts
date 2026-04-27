@@ -1008,6 +1008,7 @@ function App(){
   const [archiveEditMode, setArchiveEditMode] = useState(false);
   const [paySlips, setPaySlips] = useState([]);
   const [paySlipUploading, setPaySlipUploading] = useState(false);
+  const [previewSlip, setPreviewSlip] = useState(null); // {name, type, blobUrl}
 
   async function doReset(){
     const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY,PAYSLIP_IDX];
@@ -1242,14 +1243,61 @@ function App(){
     }
   }
 
+  async function loadPdfJs(){
+    if(window.pdfjsLib) return window.pdfjsLib;
+    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    return window.pdfjsLib;
+  }
+  async function extractPdfText(dataUrl){
+    try{
+      const pdfjsLib=await loadPdfJs();
+      const b64=dataUrl.split(',')[1];
+      const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+      let text='';
+      for(let p=1;p<=pdf.numPages;p++){const page=await pdf.getPage(p);const c=await page.getTextContent();text+=c.items.map(it=>it.str).join(' ')+'\n';}
+      return text;
+    }catch{return null;}
+  }
+  function parsePaySlipText(text){
+    if(!text) return null;
+    const n=s=>{if(!s)return null;const m=String(s).replace(/,/g,'').match(/[\d.]+/);return m?parseFloat(m[0]):null;};
+    const find=pats=>{for(const p of pats){const m=text.match(p);if(m)return n(m[1]||m[0]);}return null;};
+    const gross=find([/(?:ברוטו)[^\d]*([\d,]+)/,/(?:bruto|gross)[^\d]*([\d,]+)/i]);
+    const net=find([/(?:נטו)[^\d]*([\d,]+)/,/(?:neto|net\s+pay)[^\d]*([\d,]+)/i,/לתשלום[^\d]*([\d,]+)/]);
+    const tax=find([/מס\s*הכנסה[^\d]*([\d,]+)/,/income\s*tax[^\d]*([\d,]+)/i]);
+    const bituach=find([/ביטוח\s*לאומי[^\d]*([\d,]+)/,/national\s*ins[^\d]*([\d,]+)/i]);
+    const pension=find([/פנסי[האה][^\d]*([\d,]+)/,/pension[^\d]*([\d,]+)/i,/קרן\s*פנסיה[^\d]*([\d,]+)/]);
+    const hours=find([/סה[״"כ]\s*שעות[^\d]*([\d,.]+)/,/שעות\s*(?:עבודה|רגילות)[^\d]*([\d,.]+)/,/total\s*hours[^\d]*([\d,.]+)/i]);
+    const health=find([/ביטוח\s*בריאות[^\d]*([\d,]+)/,/health[^\d]*([\d,]+)/i]);
+    const fields={};
+    if(gross!=null) fields.gross=gross;
+    if(net!=null) fields.net=net;
+    if(tax!=null) fields.tax=tax;
+    if(bituach!=null) fields.bituach=bituach;
+    if(pension!=null) fields.pension=pension;
+    if(hours!=null) fields.hours=hours;
+    if(health!=null) fields.health=health;
+    return Object.keys(fields).length>0?fields:null;
+  }
   async function addPaySlip(file){
     if(!file)return;
     setPaySlipUploading(true);
     try{
       const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
+      // Deduplicate: find existing slip with same filename
+      const existingIdx=paySlips.findIndex(s=>s.name===file.name);
+      const existingId=existingIdx!==-1?paySlips[existingIdx].id:null;
+      if(existingId) await window.storage.delete(PAYSLIP_PFX+existingId).catch(()=>{});
+      // Analyze PDF text
+      let analysis=null;
+      if(file.type==='application/pdf'){try{const text=await extractPdfText(base64);analysis=parsePaySlipText(text);}catch{}}
       const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-      const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7)};
-      const newSlips=[...paySlips,meta];
+      const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7),analysis};
+      // Replace in-place or append
+      const newSlips=existingIdx!==-1?paySlips.map((s,i)=>i===existingIdx?meta:s):[...paySlips,meta];
       await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
       await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
       setPaySlips(newSlips);
@@ -1262,15 +1310,24 @@ function App(){
     await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
     setPaySlips(newSlips);
   }
-  async function viewPaySlip(id){
+  async function openPreviewSlip(id){
     try{
       const r=await window.storage.get(PAYSLIP_PFX+id);
       if(!r)return;
       const sl=paySlips.find(s=>s.id===id);
-      const a=document.createElement('a');
-      a.href=r.value;a.download=sl?.name||'payslip';a.target='_blank';
-      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      const dataUrl=r.value;
+      // Create a blob URL so <object>/<iframe> can render it
+      const b64=dataUrl.split(',')[1];
+      const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      const blob=new Blob([bytes],{type:sl?.type||'application/octet-stream'});
+      const blobUrl=URL.createObjectURL(blob);
+      setPreviewSlip({id,name:sl?.name||'payslip',type:sl?.type,blobUrl,analysis:sl?.analysis});
     }catch{}
+  }
+  function closePreview(){
+    if(previewSlip?.blobUrl) URL.revokeObjectURL(previewSlip.blobUrl);
+    setPreviewSlip(null);
   }
 
   function buildGCalUrl(sh){
@@ -2435,17 +2492,34 @@ function App(){
                     <div style={{textAlign:"center",padding:"18px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
                   ):(
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {[...paySlips].reverse().map(sl=>(
-                        <div key={sl.id} style={{display:"flex",alignItems:"center",gap:8,background:C.surface,borderRadius:7,padding:"8px 10px"}}>
-                          <div style={{fontSize:16}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
-                            <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
+                      {[...paySlips].reverse().map(sl=>{
+                        const a=sl.analysis;
+                        return(
+                          <div key={sl.id} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <div style={{fontSize:15}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
+                                <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
+                              </div>
+                              <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁 Preview</button>
+                              <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
+                            </div>
+                            {a&&(
+                              <div style={{display:"flex",flexWrap:"wrap",gap:"4px 10px",marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`}}>
+                                {a.gross!=null&&<span style={{fontSize:9,color:C.muted}}>Gross <span style={{color:C.text,fontWeight:700}}>₪{a.gross.toLocaleString()}</span></span>}
+                                {a.net!=null&&<span style={{fontSize:9,color:C.muted}}>Net <span style={{color:C.green,fontWeight:700}}>₪{a.net.toLocaleString()}</span></span>}
+                                {a.tax!=null&&<span style={{fontSize:9,color:C.muted}}>Tax <span style={{color:C.red,fontWeight:700}}>₪{a.tax.toLocaleString()}</span></span>}
+                                {a.bituach!=null&&<span style={{fontSize:9,color:C.muted}}>Bituach Leumi <span style={{color:C.yellow,fontWeight:700}}>₪{a.bituach.toLocaleString()}</span></span>}
+                                {a.pension!=null&&<span style={{fontSize:9,color:C.muted}}>Pension <span style={{color:C.purple,fontWeight:700}}>₪{a.pension.toLocaleString()}</span></span>}
+                                {a.health!=null&&<span style={{fontSize:9,color:C.muted}}>Health <span style={{color:C.acc,fontWeight:700}}>₪{a.health.toLocaleString()}</span></span>}
+                                {a.hours!=null&&<span style={{fontSize:9,color:C.muted}}>Hours <span style={{color:C.text,fontWeight:700}}>{a.hours}h</span></span>}
+                              </div>
+                            )}
+                            {!a&&sl.type==="application/pdf"&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>⚠ Re-upload to extract data</div>}
                           </div>
-                          <button onClick={()=>viewPaySlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>View</button>
-                          <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2528,6 +2602,41 @@ function App(){
         )}
 
       </div>
+
+      {/* ── Pay slip preview modal ── */}
+      {previewSlip&&(
+        <div onClick={closePreview} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000dd",zIndex:3000,display:"flex",flexDirection:"column",padding:0}}>
+          <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
+            {/* Header */}
+            <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+              <div style={{flex:1,fontSize:11,color:C.text,fontWeight:700,fontFamily:mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewSlip.name}</div>
+              {previewSlip.analysis&&(
+                <div style={{display:"flex",gap:"6px 14px",flexWrap:"wrap",fontSize:9,color:C.muted}}>
+                  {previewSlip.analysis.gross!=null&&<span>Gross <b style={{color:C.text}}>₪{previewSlip.analysis.gross.toLocaleString()}</b></span>}
+                  {previewSlip.analysis.net!=null&&<span>Net <b style={{color:C.green}}>₪{previewSlip.analysis.net.toLocaleString()}</b></span>}
+                  {previewSlip.analysis.tax!=null&&<span>Tax <b style={{color:C.red}}>₪{previewSlip.analysis.tax.toLocaleString()}</b></span>}
+                  {previewSlip.analysis.bituach!=null&&<span>Bituach <b style={{color:C.yellow}}>₪{previewSlip.analysis.bituach.toLocaleString()}</b></span>}
+                  {previewSlip.analysis.pension!=null&&<span>Pension <b style={{color:C.purple}}>₪{previewSlip.analysis.pension.toLocaleString()}</b></span>}
+                  {previewSlip.analysis.hours!=null&&<span>Hours <b style={{color:C.text}}>{previewSlip.analysis.hours}h</b></span>}
+                </div>
+              )}
+              <button onClick={closePreview} style={{background:`${C.red}20`,border:`1px solid ${C.red}40`,borderRadius:6,color:C.red,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono,flexShrink:0}}>✕ Close</button>
+            </div>
+            {/* Content */}
+            <div style={{flex:1,overflow:"hidden",background:"#fff"}}>
+              {previewSlip.type==="application/pdf"?(
+                <object data={previewSlip.blobUrl} type="application/pdf" style={{width:"100%",height:"100%",display:"block"}}>
+                  <iframe src={previewSlip.blobUrl} style={{width:"100%",height:"100%",border:"none"}}/>
+                </object>
+              ):(
+                <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,overflow:"auto"}}>
+                  <img src={previewSlip.blobUrl} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} alt={previewSlip.name}/>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Auth toast notification ── */}
       {authToast&&(
