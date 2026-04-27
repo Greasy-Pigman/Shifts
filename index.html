@@ -14,6 +14,8 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     ::-webkit-scrollbar{width:4px;}
     ::-webkit-scrollbar-thumb{background:#2D3748;border-radius:2px;}
+    @media(min-width:1000px){#root{zoom:1.2;}}
+    @media(min-width:1400px){#root{zoom:1.4;}}
   </style>
 </head>
 <body>
@@ -1554,15 +1556,21 @@ function App(){
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes spin{to{transform:rotate(360deg)}}
         input:focus{border-color:${C.acc}!important;box-shadow:0 0 0 2px ${C.acc}20}button:active{opacity:.7}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:${C.dim};border-radius:2px}
+        @media(min-width:700px){
+          .hdr-logo{width:40px!important;height:40px!important;font-size:20px!important;}
+          .hdr-title{font-size:15px!important;}
+          .hdr-sub{font-size:10px!important;}
+          .nav-tab{padding:13px 22px!important;font-size:12px!important;}
+        }
       `}</style>
 
       {/* ── Top Header ── */}
       <div style={{padding:"12px 14px",borderBottom:`1px solid ${C.border}`,background:`linear-gradient(160deg,#0E1422,${C.bg})`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:9}}>
-          <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
+          <div className="hdr-logo" style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
           <div>
-            <div style={{fontSize:13,fontWeight:700}}>Shiftly</div>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Statistics</div>
+            <div className="hdr-title" style={{fontSize:13,fontWeight:700}}>Shiftly</div>
+            <div className="hdr-sub" style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Statistics</div>
           </div>
         </div>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -1613,13 +1621,13 @@ function App(){
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
         {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
+          <button key={k} className="nav-tab" onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
             {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
           </button>
         ))}
       </div>
 
-      <div style={{maxWidth:860,margin:"0 auto",padding:"14px 13px"}}>
+      <div style={{maxWidth:980,margin:"0 auto",padding:"14px 13px"}}>
 
         {/* ── Global Paste URL panel — visible from any tab ── */}
         {showPaste&&!token&&(
