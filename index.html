@@ -833,19 +833,23 @@ function App(){
       try{const r=await window.storage.get(SHIFTS_KEY);if(r)setShifts(JSON.parse(r.value));}catch{}
       try{const r=await window.storage.get(NOTIF_KEY);if(r)setDismissed(JSON.parse(r.value));}catch{}
       try{const r=await window.storage.get(CAL_KEY);if(r&&r.value){setCalendarId(r.value);calIdRef.current=r.value;}}catch{}
+      let driveLoaded=false;
       try{const r=await window.storage.get(TOKEN_KEY);if(r){const sv=JSON.parse(r.value);if(sv.expiry>Date.now()){setToken(sv.token);setEmail(sv.email);if(sv.calendarId){setCalendarId(sv.calendarId);calIdRef.current=sv.calendarId;}fetchCalendars(sv.token);
           // Restore from Drive — overrides local storage if Drive has data
-          const driveLoaded=await loadFromDrive(sv.token);
+          driveLoaded=await loadFromDrive(sv.token);
           if(!driveLoaded){
-            // Fall back to local storage
+            // Fall back to local storage for shifts
             try{const sr=await window.storage.get(SHIFTS_KEY);if(sr)setShifts(JSON.parse(sr.value));}catch{}
           }}}}catch{}
-      try{
-        const r=await window.storage.get(ARCHIVE_KEY);if(!r)return;
-        const index=JSON.parse(r.value);setArchiveIndex(index);
-        const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
-        setWeekData(data);
-      }catch{}
+      if(!driveLoaded){
+        // Load archive from localStorage only when Drive didn't supply it
+        try{
+          const r=await window.storage.get(ARCHIVE_KEY);if(!r)return;
+          const index=JSON.parse(r.value);setArchiveIndex(index);
+          const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
+          setWeekData(data);
+        }catch{}
+      }
       try{const r=await window.storage.get(PAYSLIP_IDX);if(r)setPaySlips(JSON.parse(r.value));}catch{}
     })();
     // Check URL hash for token (handles redirect back to this page)
@@ -938,21 +942,39 @@ function App(){
       driveFileIdRef.current=file.id;
       const data=await driveRead(token, file.id);
       if(!data){setDriveStatus("error");setDriveError("Could not read Drive file");return false;}
-      // Restore all state from Drive
-      if(data.shifts) setShifts(data.shifts);
-      if(data.dismissed) setDismissed(data.dismissed);
+      // Restore all state from Drive AND mirror to localStorage so refresh works
+      if(data.shifts){setShifts(data.shifts);await window.storage.set(SHIFTS_KEY,JSON.stringify(data.shifts)).catch(()=>{});}
+      if(data.dismissed){setDismissed(data.dismissed);await window.storage.set(NOTIF_KEY,JSON.stringify(data.dismissed)).catch(()=>{});}
       if(data.archiveIndex){
         setArchiveIndex(data.archiveIndex);
-        if(data.weekData) setWeekData(data.weekData);
+        await window.storage.set(ARCHIVE_KEY,JSON.stringify(data.archiveIndex)).catch(()=>{});
+        if(data.weekData){
+          setWeekData(data.weekData);
+          for(const [wKey,wData] of Object.entries(data.weekData)){
+            await window.storage.set(WEEK_PFX+wKey,JSON.stringify(wData)).catch(()=>{});
+          }
+        }
       }
-      setDriveStatus("saved");
-      setDriveError(null);
+      setDriveStatus("saved");setDriveError(null);
       return true;
     }catch(e){
-      setDriveStatus("error");
-      setDriveError(e.message);
+      setDriveStatus("error");setDriveError(e.message);
       return false;
     }
+  }
+
+  async function saveNow(){
+    if(!token)return;
+    clearTimeout(driveSaveTimerRef.current);
+    setDriveStatus("saving");
+    try{
+      const payload={shifts,dismissed,archiveIndex,weekData,savedAt:new Date().toISOString(),version:"v69"};
+      const result=await driveWrite(token,driveFileIdRef.current,payload);
+      if(result){
+        if(!driveFileIdRef.current)driveFileIdRef.current=result.id;
+        setDriveStatus("saved");
+      }else{setDriveStatus("error");setDriveError("Save failed");}
+    }catch(e){setDriveStatus("error");setDriveError(e.message);}
   }
 
   async function saveToDrive(token, shiftsData, dismissedData, archiveIndexData, weekDataData){
@@ -1560,9 +1582,10 @@ function App(){
               {/* Drive sync status */}
               {driveStatus==="saving"&&<span style={{fontSize:9,color:C.yellow,fontFamily:mono}}>💾 Saving…</span>}
               {driveStatus==="saved"&&<span style={{fontSize:9,color:C.green,fontFamily:mono}}>☁ Synced</span>}
-              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}} title={driveError||""}>☁ Sync error</span>}
+              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono,cursor:"help"}} title={driveError||""}>☁ Error</span>}
               {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
-              <button onClick={()=>loadFromDrive(token)} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
+              <button onClick={()=>loadFromDrive(token)} disabled={driveStatus==="loading"} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
+              <button onClick={saveNow} disabled={driveStatus==="saving"} title="Save all data to Google Drive now" style={{background:`${C.green}10`,border:`1px solid ${C.green}30`,borderRadius:7,color:C.green,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>💾 Save</button>
               {calendars.length>0&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.muted}}>Cal:</span><select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:140}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"📅 "+cal.name}</option>))}</select></div>}
               <button onClick={testToken} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:8,color:C.acc,padding:"8px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔍 Test</button>
               <button onClick={signOut} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>Sign out</button>
