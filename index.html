@@ -77,6 +77,8 @@ const ARCHIVE_KEY= "yotam_archive_index";
 const FILE_PFX   = "yotam_file_";
 const WEEK_PFX   = "yotam_week_";
 const CAL_KEY    = "shiftly_cal_id";
+const PAYSLIP_PFX= "yotam_payslip_";
+const PAYSLIP_IDX= "yotam_payslips";
 const DRIVE_API  = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_FILE_NAME = "shifts-tracker-data.json";
@@ -619,7 +621,9 @@ function toGCal(sh){
   const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:isDouble?"[Double]":"[Shift]";
   const shiftLabel=isDouble?"Double Shift":sh.shiftType;
   const desc=[`${typeStr} ${shiftLabel}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
-  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
+  const isFuture=sD>new Date();
+  const reminders=isFuture?{useDefault:false,overrides:[{method:"popup",minutes:60},{method:"popup",minutes:30}]}:{useDefault:false,overrides:[]};
+  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -799,7 +803,7 @@ function App(){
     setImporting(val);
   }
   // Main nav
-  const [mainTab,   setMainTab]   = useState("tracker"); // tracker | archive | patterns
+  const [mainTab,   setMainTab]   = useState("tracker"); // tracker | archive | statistics
   const calIdRef = useRef("primary");
   const driveFileIdRef = useRef(null);
   const driveSaveTimerRef = useRef(null);
@@ -842,6 +846,7 @@ function App(){
         const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
         setWeekData(data);
       }catch{}
+      try{const r=await window.storage.get(PAYSLIP_IDX);if(r)setPaySlips(JSON.parse(r.value));}catch{}
     })();
     // Check URL hash for token (handles redirect back to this page)
     const fullUrl=window.location.href;
@@ -1001,17 +1006,21 @@ function App(){
   const [weekDeleting, setWeekDeleting] = useState(false);
   const [weekDeleteMsg, setWeekDeleteMsg] = useState(null);
   const [archiveEditMode, setArchiveEditMode] = useState(false);
+  const [paySlips, setPaySlips] = useState([]);
+  const [paySlipUploading, setPaySlipUploading] = useState(false);
 
   async function doReset(){
-    const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY];
+    const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY,PAYSLIP_IDX];
     for(const k of keys) await window.storage.delete(k).catch(()=>{});
     for(const key of archiveIndex){
       await window.storage.delete(FILE_PFX+key).catch(()=>{});
       await window.storage.delete(WEEK_PFX+key).catch(()=>{});
     }
+    for(const s of paySlips) await window.storage.delete(PAYSLIP_PFX+s.id).catch(()=>{});
     setShifts([]);setDismissed([]);setToken(null);setEmail(null);
     setCalendars([]);setCalendarId("primary");setGcMsg(null);
     setArchiveIndex([]);setWeekData({});setSelWeek(null);
+    setPaySlips([]);
     setArchiveView("timeline");setMainTab("tracker");
     setImpMsg(null);setArchiveMsg(null);setResetStep(0);
     setImporting(false);setSyncing(false);
@@ -1233,6 +1242,37 @@ function App(){
     }
   }
 
+  async function addPaySlip(file){
+    if(!file)return;
+    setPaySlipUploading(true);
+    try{
+      const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
+      const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+      const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7)};
+      const newSlips=[...paySlips,meta];
+      await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
+      await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
+      setPaySlips(newSlips);
+    }catch(e){console.error('PaySlip upload failed',e);}
+    finally{setPaySlipUploading(false);}
+  }
+  async function deletePaySlip(id){
+    await window.storage.delete(PAYSLIP_PFX+id).catch(()=>{});
+    const newSlips=paySlips.filter(s=>s.id!==id);
+    await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
+    setPaySlips(newSlips);
+  }
+  async function viewPaySlip(id){
+    try{
+      const r=await window.storage.get(PAYSLIP_PFX+id);
+      if(!r)return;
+      const sl=paySlips.find(s=>s.id===id);
+      const a=document.createElement('a');
+      a.href=r.value;a.download=sl?.name||'payslip';a.target='_blank';
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }catch{}
+  }
+
   function buildGCalUrl(sh){
     const pay=calcPay(sh);
     const[y,mo,d]=sh.date.split("-").map(Number);
@@ -1413,6 +1453,14 @@ function App(){
   const maxMonthHrs=Math.max(...monthlyHrs,1);
   const weeklyTrend=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;const myH=(w.myShifts||[]).reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0);const teamH=(w.rosterSummary||[]).reduce((s,r)=>s+r.totalHrs,0);return{key,weekStart:w.weekStart,myHrs:+myH.toFixed(1),teamAvgHrs:w.workerCount>0?+(teamH/w.workerCount).toFixed(1):0,shifts:(w.myShifts||[]).length};}).filter(Boolean);
   const maxWeekHrs=Math.max(...weeklyTrend.map(w=>Math.max(w.myHrs,w.teamAvgHrs)),1);
+  // Net pay stats for Statistics tab
+  const weeklyNet=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;const net=(w.myShifts||[]).reduce((s,sh)=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);return s+(p?.net||0);},0);return{key,weekStart:w.weekStart,net:+net.toFixed(0)};}).filter(Boolean);
+  const maxWeekNet=Math.max(...weeklyNet.map(w=>w.net),1);
+  const avgWeekNet=weeklyNet.length>0?weeklyNet.reduce((s,w)=>s+w.net,0)/weeklyNet.length:0;
+  const monthlyNetMap={};Object.values(weekData).forEach(w=>{(w.myShifts||[]).forEach(sh=>{if(!sh.date)return;const mk=sh.date.slice(0,7);const p=calcShiftPay(sh,sh.priorDayHrs||0);if(p?.net)monthlyNetMap[mk]=(monthlyNetMap[mk]||0)+p.net;});});
+  const monthlyNetArr=Object.entries(monthlyNetMap).sort(([a],[b])=>a.localeCompare(b));
+  const maxMonthNet=Math.max(...monthlyNetArr.map(([,v])=>v),1);
+  const avgMonthNet=monthlyNetArr.length>0?monthlyNetArr.reduce((s,[,v])=>s+v,0)/monthlyNetArr.length:0;
   const selData=selWeek?weekData[selWeek]:null;
 
   const inp=(ex={})=>({background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"7px 10px",fontSize:12,fontFamily:mono,outline:"none",width:"100%",boxSizing:"border-box",...ex});
@@ -1434,7 +1482,7 @@ function App(){
           <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
           <div>
             <div style={{fontSize:13,fontWeight:700}}>Shiftly</div>
-            <div style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Patterns</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Statistics</div>
           </div>
         </div>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -1461,7 +1509,7 @@ function App(){
 
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
-        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["patterns","📊 Patterns"]].map(([k,l])=>(
+        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"]].map(([k,l])=>(
           <button key={k} onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
             {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
           </button>
@@ -2315,16 +2363,92 @@ function App(){
         )}
 
         {/* ══════════════ PATTERNS TAB ══════════════ */}
-        {mainTab==="patterns"&&(
+        {mainTab==="statistics"&&(
           <div>
-            {allArchived.length===0?(
+            {allArchived.length===0&&paySlips.length===0?(
               <div style={{textAlign:"center",padding:"44px 20px",color:C.muted}}>
                 <div style={{fontSize:36,marginBottom:10}}>📊</div>
                 <div style={{fontFamily:sans,fontWeight:700,fontSize:13,color:C.text,marginBottom:5}}>No data yet</div>
-                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see patterns</div>
+                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see statistics</div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+                {/* Earnings summary */}
+                {allArchived.length>0&&(
+                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Earnings Averages</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      {[["Avg / Week",avgWeekNet],["Avg / Month",avgMonthNet]].map(([lbl,val])=>(
+                        <div key={lbl} style={{background:C.surface,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(val).toLocaleString()}</div>
+                          <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginTop:2}}>{lbl}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Monthly net pay */}
+                {monthlyNetArr.length>0&&(
+                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Net Pay by Month</div>
+                    {monthlyNetArr.map(([mk,val])=>{
+                      const [yr,mo]=mk.split("-").map(Number);
+                      const lbl=`${MONTHS[mo-1]} '${String(yr).slice(2)}`;
+                      return(
+                        <div key={mk} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
+                          <div style={{width:44,fontSize:10,color:C.muted,flexShrink:0}}>{lbl}</div>
+                          <Bar value={val} max={maxMonthNet} color={C.green} height={8}/>
+                          <div style={{width:46,fontSize:10,color:C.green,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Weekly net pay trend */}
+                {weeklyNet.length>1&&(
+                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Net Pay by Week</div>
+                    {weeklyNet.map(w=>(
+                      <div key={w.key} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
+                        <div style={{width:36,fontSize:8,color:C.muted,flexShrink:0}}>{fmtShort(w.weekStart)}</div>
+                        <Bar value={w.net} max={maxWeekNet} color={C.purple} height={6}/>
+                        <div style={{width:46,fontSize:9,color:C.purple,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{w.net.toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Pay Slips */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Pay Slips</div>
+                    <label style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
+                      {paySlipUploading?"Uploading...":"+ Upload"}
+                      <input type="file" accept="application/pdf,image/*" style={{display:"none"}} disabled={paySlipUploading}
+                        onChange={e=>{const f=e.target.files?.[0];if(f){addPaySlip(f);e.target.value="";}}}/>
+                    </label>
+                  </div>
+                  {paySlips.length===0?(
+                    <div style={{textAlign:"center",padding:"18px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {[...paySlips].reverse().map(sl=>(
+                        <div key={sl.id} style={{display:"flex",alignItems:"center",gap:8,background:C.surface,borderRadius:7,padding:"8px 10px"}}>
+                          <div style={{fontSize:16}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
+                            <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
+                          </div>
+                          <button onClick={()=>viewPaySlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>View</button>
+                          <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Day of week */}
                 <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
