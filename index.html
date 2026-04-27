@@ -716,53 +716,54 @@ function DoubleTipField({sh,hrs,partnerTips,partnerOk,partnerName,updFn,inpFn,co
 }
 
 // ── Google Drive persistence helpers ──────────────────────────────────────
+async function driveErrMsg(r){
+  try{const e=await r.json();return e?.error?.message||`HTTP ${r.status}`;}catch{return `HTTP ${r.status}`;}
+}
 async function driveFind(token, name){
   const q=encodeURIComponent(`name='${name}' and trashed=false`);
   const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name,modifiedTime)`,
     {headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) return null;
+  if(!r.ok) throw new Error(await driveErrMsg(r));
   const d=await r.json();
   return d.files?.[0]||null;
 }
-
 async function driveRead(token, fileId){
   const r=await fetch(`${DRIVE_API}/files/${fileId}?alt=media`,
     {headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) return null;
+  if(!r.ok) throw new Error(await driveErrMsg(r));
   return r.json();
 }
-
 async function driveWrite(token, fileId, data){
   const body=JSON.stringify(data);
-  const url=fileId
-    ? `${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`
-    : `${DRIVE_UPLOAD}/files?uploadType=multipart`;
   if(fileId){
-    // Update existing file
-    const r=await fetch(url,{method:"PATCH",
+    const r=await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`,{
+      method:"PATCH",
       headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
       body});
-    return r.ok?await r.json():null;
-  } else {
-    // Create new file with metadata
-    const meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
-    const boundary="shifts_tracker_boundary";
-    const multipart=[
-      `--${boundary}`,
-      "Content-Type: application/json; charset=UTF-8",
-      "",meta,"",
-      `--${boundary}`,
-      "Content-Type: application/json",
-      "",body,
-      `--${boundary}--`
-    ].join("\r\n");
-    const r=await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart`,{
-      method:"POST",
-      headers:{Authorization:`Bearer ${token}`,
-        "Content-Type":`multipart/related; boundary=${boundary}`},
-      body:multipart});
-    return r.ok?await r.json():null;
+    if(r.status===404||r.status===410) return {_gone:true};
+    if(!r.ok) throw new Error(await driveErrMsg(r));
+    return r.json();
   }
+  // Create new file — correct multipart format (no extra blank lines)
+  const meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
+  const boundary="shifts_tracker_boundary";
+  const multipart=[
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    meta,
+    `--${boundary}`,
+    "Content-Type: application/json",
+    "",
+    body,
+    `--${boundary}--`
+  ].join("\r\n");
+  const r=await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart`,{
+    method:"POST",
+    headers:{Authorization:`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},
+    body:multipart});
+  if(!r.ok) throw new Error(await driveErrMsg(r));
+  return r.json();
 }
 
 function App(){
@@ -937,7 +938,7 @@ function App(){
   async function loadFromDrive(token){
     setDriveStatus("loading");
     try{
-      const file=await driveFind(token, DRIVE_FILE_NAME);
+      const file=await driveFind(token, DRIVE_FILE_NAME).catch(()=>null);
       if(!file){setDriveStatus("idle");return false;}
       driveFileIdRef.current=file.id;
       const data=await driveRead(token, file.id);
@@ -969,42 +970,30 @@ function App(){
     setDriveStatus("saving");
     try{
       const payload={shifts,dismissed,archiveIndex,weekData,savedAt:new Date().toISOString(),version:"v69"};
-      const result=await driveWrite(token,driveFileIdRef.current,payload);
-      if(result){
-        if(!driveFileIdRef.current)driveFileIdRef.current=result.id;
-        setDriveStatus("saved");
-      }else{setDriveStatus("error");setDriveError("Save failed");}
+      let result=await driveWrite(token,driveFileIdRef.current,payload);
+      if(result?._gone){
+        // File was deleted from Drive — create a new one
+        driveFileIdRef.current=null;
+        result=await driveWrite(token,null,payload);
+      }
+      driveFileIdRef.current=result?.id||driveFileIdRef.current;
+      setDriveStatus("saved");setDriveError(null);
     }catch(e){setDriveStatus("error");setDriveError(e.message);}
   }
 
   async function saveToDrive(token, shiftsData, dismissedData, archiveIndexData, weekDataData){
-    if(!token||!driveStatus) return;
-    // Debounce: wait 2s after last change before saving
+    if(!token) return;
     clearTimeout(driveSaveTimerRef.current);
     driveSaveTimerRef.current=setTimeout(async()=>{
       setDriveStatus("saving");
       try{
-        const payload={
-          shifts: shiftsData,
-          dismissed: dismissedData,
-          archiveIndex: archiveIndexData,
-          weekData: weekDataData,
-          savedAt: new Date().toISOString(),
-          version: "v69",
-        };
-        const result=await driveWrite(token, driveFileIdRef.current, payload);
-        if(result){
-          if(!driveFileIdRef.current) driveFileIdRef.current=result.id;
-          setDriveStatus("saved");
-        } else {
-          setDriveStatus("error");
-          setDriveError("Save failed");
-        }
-      }catch(e){
-        setDriveStatus("error");
-        setDriveError(e.message);
-      }
-    }, 2000);
+        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,savedAt:new Date().toISOString(),version:"v69"};
+        let result=await driveWrite(token,driveFileIdRef.current,payload);
+        if(result?._gone){driveFileIdRef.current=null;result=await driveWrite(token,null,payload);}
+        driveFileIdRef.current=result?.id||driveFileIdRef.current;
+        setDriveStatus("saved");setDriveError(null);
+      }catch(e){setDriveStatus("error");setDriveError(e.message);}
+    },2000);
   }
   function testToken(){
     setGcMsg(null);
@@ -1582,7 +1571,7 @@ function App(){
               {/* Drive sync status */}
               {driveStatus==="saving"&&<span style={{fontSize:9,color:C.yellow,fontFamily:mono}}>💾 Saving…</span>}
               {driveStatus==="saved"&&<span style={{fontSize:9,color:C.green,fontFamily:mono}}>☁ Synced</span>}
-              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono,cursor:"help"}} title={driveError||""}>☁ Error</span>}
+              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}} title={driveError||""}>{driveError?"☁ "+driveError.slice(0,40):"☁ Sync error"}</span>}
               {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
               <button onClick={()=>loadFromDrive(token)} disabled={driveStatus==="loading"} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
               <button onClick={saveNow} disabled={driveStatus==="saving"} title="Save all data to Google Drive now" style={{background:`${C.green}10`,border:`1px solid ${C.green}30`,borderRadius:7,color:C.green,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>💾 Save</button>
