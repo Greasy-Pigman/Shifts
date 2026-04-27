@@ -1302,27 +1302,27 @@ function App(){
     if(health!=null) fields.health=health;
     return Object.keys(fields).length>0?fields:null;
   }
-  async function addPaySlip(file){
-    if(!file)return;
+  async function addPaySlips(files){
+    if(!files||!files.length)return;
     setPaySlipUploading(true);
     try{
-      const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
-      // Deduplicate: find existing slip with same filename
-      const existingIdx=paySlips.findIndex(s=>s.name===file.name);
-      const existingId=existingIdx!==-1?paySlips[existingIdx].id:null;
-      if(existingId) await window.storage.delete(PAYSLIP_PFX+existingId).catch(()=>{});
-      // Analyze PDF text
-      let analysis=null;
-      if(file.type==='application/pdf'){try{const text=await extractPdfText(base64);analysis=parsePaySlipText(text);}catch{}}
-      const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-      const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7),analysis};
-      // Replace in-place or append
-      const newSlips=existingIdx!==-1?paySlips.map((s,i)=>i===existingIdx?meta:s):[...paySlips,meta];
-      await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
-      await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
-      setPaySlips(newSlips);
-    }catch(e){console.error('PaySlip upload failed',e);}
-    finally{setPaySlipUploading(false);}
+      let currentSlips=[...paySlips];
+      for(const file of Array.from(files)){
+        try{
+          const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
+          const existingIdx=currentSlips.findIndex(s=>s.name===file.name);
+          if(existingIdx!==-1) await window.storage.delete(PAYSLIP_PFX+currentSlips[existingIdx].id).catch(()=>{});
+          let analysis=null;
+          if(file.type==='application/pdf'){try{const text=await extractPdfText(base64);analysis=parsePaySlipText(text);}catch{}}
+          const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+          const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7),analysis};
+          currentSlips=existingIdx!==-1?currentSlips.map((s,i)=>i===existingIdx?meta:s):[...currentSlips,meta];
+          await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
+        }catch(e){console.error('PaySlip upload failed:',file.name,e);}
+      }
+      await window.storage.set(PAYSLIP_IDX,JSON.stringify(currentSlips)).catch(()=>{});
+      setPaySlips(currentSlips);
+    }finally{setPaySlipUploading(false);}
   }
   async function deletePaySlip(id){
     await window.storage.delete(PAYSLIP_PFX+id).catch(()=>{});
@@ -2528,8 +2528,8 @@ function App(){
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Pay Slips</div>
                     <label style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
                       {paySlipUploading?"Uploading...":"+ Upload"}
-                      <input type="file" accept="application/pdf,image/*" style={{display:"none"}} disabled={paySlipUploading}
-                        onChange={e=>{const f=e.target.files?.[0];if(f){addPaySlip(f);e.target.value="";}}}/>
+                      <input type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
+                        onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
                     </label>
                   </div>
                   {paySlips.length===0?(
