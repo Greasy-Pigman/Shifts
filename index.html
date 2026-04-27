@@ -1020,6 +1020,8 @@ function App(){
   const [paySlips, setPaySlips] = useState([]);
   const [paySlipUploading, setPaySlipUploading] = useState(false);
   const [previewSlip, setPreviewSlip] = useState(null); // {name, type, blobUrl}
+  const [slipDragOver, setSlipDragOver] = useState(false);
+  const slipInputRef = useRef(null);
 
   async function doReset(){
     const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY,PAYSLIP_IDX];
@@ -2524,16 +2526,25 @@ function App(){
 
                 {/* Pay Slips */}
                 <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <input ref={slipInputRef} type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
+                    onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Pay Slips</div>
-                    <label style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
+                    <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
+                      style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
                       {paySlipUploading?"Uploading...":"+ Upload"}
-                      <input type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
-                        onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
-                    </label>
+                    </button>
+                  </div>
+                  {/* Drag-and-drop zone */}
+                  <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}}
+                    onDragLeave={()=>setSlipDragOver(false)}
+                    onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
+                    onClick={()=>!paySlipUploading&&slipInputRef.current?.click()}
+                    style={{border:`2px dashed ${slipDragOver?C.acc:C.border}`,borderRadius:8,padding:"12px",textAlign:"center",marginBottom:paySlips.length?10:0,cursor:"pointer",background:slipDragOver?`${C.acc}08`:"transparent",transition:"all .15s"}}>
+                    <div style={{fontSize:10,color:slipDragOver?C.acc:C.muted}}>{paySlipUploading?"Processing files…":"Drop files here or click to browse — PDF, image, multiple files supported"}</div>
                   </div>
                   {paySlips.length===0?(
-                    <div style={{textAlign:"center",padding:"18px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
+                    <div style={{textAlign:"center",padding:"6px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
                   ):(
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {[...paySlips].reverse().map(sl=>{
