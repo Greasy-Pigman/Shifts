@@ -1076,12 +1076,14 @@ function App(){
       return u;
     });
     const newWData = {...wData, myShifts: newShifts};
-    setWeekData(prev => ({...prev, [weekKey]: newWData}));
+    const newWeekData = {...weekData, [weekKey]: newWData};
+    setWeekData(newWeekData);
     await window.storage.set(WEEK_PFX + weekKey, JSON.stringify(newWData)).catch(() => {});
+    if(token) saveToDrive(token, shifts, dismissed, archiveIndex, newWeekData);
     // Also update main shifts state if this shift exists there
     const inMain = shifts.find(s => s.id === shiftId);
     if (inMain) await upd(shiftId, patch);
-  }, [weekData, shifts, upd]);
+  }, [weekData, shifts, upd, token, dismissed, archiveIndex]);
 
   // ── Archive: upload schedule ──
   async function onArchiveFile(e){
@@ -1131,6 +1133,7 @@ function App(){
     if(mergedShifts!==null)await save(mergedShifts);
     await window.storage.set(ARCHIVE_KEY,JSON.stringify(newIndex));
     setArchiveIndex(newIndex);setWeekData(newWeekData);
+    if(token) saveToDrive(token, mergedShifts!==null?dedupeShifts(mergedShifts):shifts, dismissed, newIndex, newWeekData);
     const ok=results.filter(r=>r.ok);
     const skipped=results.filter(r=>!r.ok);
     let msg="";
@@ -1160,7 +1163,9 @@ function App(){
     if(!confirm("Delete this week's archive?"))return;
     await window.storage.delete(FILE_PFX+key).catch(()=>{});await window.storage.delete(WEEK_PFX+key).catch(()=>{});
     const ni=archiveIndex.filter(k=>k!==key);await window.storage.set(ARCHIVE_KEY,JSON.stringify(ni));
-    setArchiveIndex(ni);setWeekData(prev=>{const n={...prev};delete n[key];return n;});
+    const newWD={...weekData};delete newWD[key];
+    setArchiveIndex(ni);setWeekData(newWD);
+    if(token) saveToDrive(token, shifts, dismissed, ni, newWD);
     if(selWeek===key){setSelWeek(null);setArchiveView("timeline");}
   }
 
@@ -1195,8 +1200,10 @@ function App(){
       }
       if(Object.keys(gcalUpdates).length>0&&selWeek&&weekData[selWeek]){
         const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s)};
-        setWeekData(prev=>({...prev,[selWeek]:updWData}));
+        const updWD2={...weekData,[selWeek]:updWData};
+        setWeekData(updWD2);
         await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
+        saveToDrive(token, shifts, dismissed, archiveIndex, updWD2);
       }
       const nextMain=shifts.map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s);
       if(nextMain.some((s,i)=>s!==shifts[i]))await save(nextMain);
@@ -1232,8 +1239,10 @@ function App(){
       }
       if(Object.keys(cleared).length>0&&selWeek&&weekData[selWeek]){
         const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>cleared[s.id]?{...s,gcalEventId:null}:s)};
-        setWeekData(prev=>({...prev,[selWeek]:updWData}));
+        const updWD3={...weekData,[selWeek]:updWData};
+        setWeekData(updWD3);
         await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
+        saveToDrive(token, shifts, dismissed, archiveIndex, updWD3);
       }
       setWeekDeleteMsg({ok:errors===0,text:`🗑 ${deleted} deleted${errors?`, ${errors} failed`:""}`});
     }catch(e){
@@ -1453,6 +1462,7 @@ function App(){
           }
         }
         setWeekData(updWD);
+        saveToDrive(token, next, dismissed, archiveIndex, updWD);
       }
       const parts=[`✓ ${created} created, ${updated} updated`];
       if(errors)parts.push(`${errors} failed${lastErr?` (${lastErr.slice(0,50)})`:""}`);
@@ -1547,6 +1557,12 @@ function App(){
           {token?(
             <>
               {badg(C.green,"🔗 "+(email||"Connected"))}
+              {/* Drive sync status */}
+              {driveStatus==="saving"&&<span style={{fontSize:9,color:C.yellow,fontFamily:mono}}>💾 Saving…</span>}
+              {driveStatus==="saved"&&<span style={{fontSize:9,color:C.green,fontFamily:mono}}>☁ Synced</span>}
+              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}} title={driveError||""}>☁ Sync error</span>}
+              {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
+              <button onClick={()=>loadFromDrive(token)} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
               {calendars.length>0&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.muted}}>Cal:</span><select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:140}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"📅 "+cal.name}</option>))}</select></div>}
               <button onClick={testToken} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:8,color:C.acc,padding:"8px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔍 Test</button>
               <button onClick={signOut} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>Sign out</button>
@@ -1555,7 +1571,7 @@ function App(){
             </>
           ):(
             <>
-              <button onClick={signIn} style={{background:"linear-gradient(135deg,#EA4335,#FBBC05)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔗 Google</button>
+              <button onClick={signIn} title="Sign in to sync data across all your devices via Google Drive" style={{background:"linear-gradient(135deg,#EA4335,#FBBC05)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔗 Sign in to sync</button>
               <button onClick={()=>setShowPaste(v=>!v)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>📋 Paste URL</button>
 
               <button onClick={()=>setResetStep(1)} style={{background:`${C.red}20`,border:`1px solid ${C.red}50`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🗑 Reset</button>
