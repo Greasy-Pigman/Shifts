@@ -1571,7 +1571,7 @@ function App(){
               {/* Drive sync status */}
               {driveStatus==="saving"&&<span style={{fontSize:9,color:C.yellow,fontFamily:mono}}>💾 Saving…</span>}
               {driveStatus==="saved"&&<span style={{fontSize:9,color:C.green,fontFamily:mono}}>☁ Synced</span>}
-              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}} title={driveError||""}>{driveError?"☁ "+driveError.slice(0,40):"☁ Sync error"}</span>}
+              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}}>☁ Error</span>}
               {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
               <button onClick={()=>loadFromDrive(token)} disabled={driveStatus==="loading"} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
               <button onClick={saveNow} disabled={driveStatus==="saving"} title="Save all data to Google Drive now" style={{background:`${C.green}10`,border:`1px solid ${C.green}30`,borderRadius:7,color:C.green,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>💾 Save</button>
@@ -1591,6 +1591,22 @@ function App(){
           )}
         </div>
       </div>
+
+      {/* ── Drive error banner ── */}
+      {driveStatus==="error"&&driveError&&(()=>{
+        const isDisabled=driveError.toLowerCase().includes("has not been used")||driveError.toLowerCase().includes("disabled");
+        const urlMatch=driveError.match(/https:\/\/console[^\s]+/);
+        const enableUrl=urlMatch?urlMatch[0]:`https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=657282377889`;
+        return(
+          <div style={{background:isDisabled?`${C.yellow}15`:`${C.red}12`,borderBottom:`1px solid ${isDisabled?C.yellow:C.red}30`,padding:"8px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:10,color:isDisabled?C.yellow:C.red,flex:1}}>
+              {isDisabled?"⚠ Google Drive API is not enabled for this project — sync won't work until enabled.":("☁ Drive error: "+driveError)}
+            </span>
+            {isDisabled&&<a href={enableUrl} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:700,color:C.yellow,fontFamily:mono,background:`${C.yellow}20`,border:`1px solid ${C.yellow}40`,borderRadius:6,padding:"4px 10px",textDecoration:"none",whiteSpace:"nowrap"}}>Enable Drive API →</a>}
+            <button onClick={()=>{setDriveError(null);setDriveStatus("idle");}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
+          </div>
+        );
+      })()}
 
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
