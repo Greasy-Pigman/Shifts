@@ -958,6 +958,10 @@ function App(){
           }
         }
       }
+      if(Array.isArray(data.paySlips)&&data.paySlips.length>0){
+        setPaySlips(data.paySlips);
+        await window.storage.set(PAYSLIP_IDX,JSON.stringify(data.paySlips)).catch(()=>{});
+      }
       setDriveStatus("saved");setDriveError(null);
       return true;
     }catch(e){
@@ -971,7 +975,7 @@ function App(){
     clearTimeout(driveSaveTimerRef.current);
     setDriveStatus("saving");
     try{
-      const payload={shifts,dismissed,archiveIndex,weekData,savedAt:new Date().toISOString(),version:"v69"};
+      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
       let result=await driveWrite(token,driveFileIdRef.current,payload);
       if(result?._gone){
         // File was deleted from Drive — create a new one
@@ -989,7 +993,7 @@ function App(){
     driveSaveTimerRef.current=setTimeout(async()=>{
       setDriveStatus("saving");
       try{
-        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,savedAt:new Date().toISOString(),version:"v69"};
+        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
         let result=await driveWrite(token,driveFileIdRef.current,payload);
         if(result?._gone){driveFileIdRef.current=null;result=await driveWrite(token,null,payload);}
         driveFileIdRef.current=result?.id||driveFileIdRef.current;
@@ -1023,6 +1027,7 @@ function App(){
   const [paySlipUploading, setPaySlipUploading] = useState(false);
   const [previewSlip, setPreviewSlip] = useState(null); // {name, type, blobUrl}
   const [slipDragOver, setSlipDragOver] = useState(false);
+  const [slipMsg, setSlipMsg] = useState(null); // {ok, text}
   const slipInputRef = useRef(null);
 
   async function doReset(){
@@ -1326,6 +1331,7 @@ function App(){
       }
       await window.storage.set(PAYSLIP_IDX,JSON.stringify(currentSlips)).catch(()=>{});
       setPaySlips(currentSlips);
+      if(token) saveToDrive(token, shifts, dismissed, archiveIndex, weekData);
     }finally{setPaySlipUploading(false);}
   }
   async function deletePaySlip(id){
@@ -1333,11 +1339,12 @@ function App(){
     const newSlips=paySlips.filter(s=>s.id!==id);
     await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
     setPaySlips(newSlips);
+    if(token) saveToDrive(token, shifts, dismissed, archiveIndex, weekData);
   }
   async function openPreviewSlip(id){
     try{
-      const r=await window.storage.get(PAYSLIP_PFX+id);
-      if(!r)return;
+      const r=await window.storage.get(PAYSLIP_PFX+id).catch(()=>null);
+      if(!r){setSlipMsg({ok:false,text:"File not on this device — re-upload the PDF here to enable preview."});return;}
       const sl=paySlips.find(s=>s.id===id);
       const dataUrl=r.value;
       // Create a blob URL so <object>/<iframe> can render it
@@ -2751,6 +2758,7 @@ function App(){
                       {paySlipUploading?"Uploading...":"+ Upload"}
                     </button>
                   </div>
+                  {slipMsg&&<div style={{background:slipMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${slipMsg.ok?C.green:C.red}30`,borderRadius:7,padding:"8px 12px",fontSize:10,color:slipMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:8,animation:"slideIn .2s ease"}}><span style={{flex:1}}>{slipMsg.text}</span><button onClick={()=>setSlipMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
                   <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}}
                     onDragLeave={()=>setSlipDragOver(false)}
                     onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
