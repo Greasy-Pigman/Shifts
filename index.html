@@ -1292,23 +1292,36 @@ function App(){
   }
   function parsePaySlipText(text){
     if(!text) return null;
-    const n=s=>{if(!s)return null;const m=String(s).replace(/,/g,'').match(/[\d.]+/);return m?parseFloat(m[0]):null;};
-    const find=pats=>{for(const p of pats){const m=text.match(p);if(m)return n(m[1]||m[0]);}return null;};
-    const gross=find([/(?:ברוטו)[^\d]*([\d,]+)/,/(?:bruto|gross)[^\d]*([\d,]+)/i]);
-    const net=find([/(?:נטו)[^\d]*([\d,]+)/,/(?:neto|net\s+pay)[^\d]*([\d,]+)/i,/לתשלום[^\d]*([\d,]+)/]);
-    const tax=find([/מס\s*הכנסה[^\d]*([\d,]+)/,/income\s*tax[^\d]*([\d,]+)/i]);
-    const bituach=find([/ביטוח\s*לאומי[^\d]*([\d,]+)/,/national\s*ins[^\d]*([\d,]+)/i]);
-    const pension=find([/פנסי[האה][^\d]*([\d,]+)/,/pension[^\d]*([\d,]+)/i,/קרן\s*פנסיה[^\d]*([\d,]+)/]);
-    const hours=find([/סה[״"כ]\s*שעות[^\d]*([\d,.]+)/,/שעות\s*(?:עבודה|רגילות)[^\d]*([\d,.]+)/,/total\s*hours[^\d]*([\d,.]+)/i]);
-    const health=find([/ביטוח\s*בריאות[^\d]*([\d,]+)/,/health[^\d]*([\d,]+)/i]);
+    const t=text.replace(/\s+/g,' ');
+    // Find the largest number within an 80-char window around each keyword.
+    // minV/maxV filter out stray small numbers (dates, codes, etc.).
+    const findNear=(kws,minV,maxV)=>{
+      for(const kw of kws){
+        const m=t.match(kw);
+        if(!m) continue;
+        const win=t.slice(Math.max(0,m.index-80),Math.min(t.length,m.index+m[0].length+80));
+        const nums=[...win.matchAll(/([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/g)]
+          .map(x=>parseFloat(x[1].replace(/,/g,'')))
+          .filter(n=>!isNaN(n)&&n>=minV&&n<=maxV);
+        if(nums.length>0) return Math.max(...nums);
+      }
+      return null;
+    };
+    const gross=findNear([/ברוטו/,/שכר\s*ברוטו/,/bruto/i,/gross\s*(?:pay|salary)?/i],1000,99999);
+    const net=findNear([/נטו/,/לתשלום/,/neto/i,/net\s*(?:pay|salary)?/i],1000,99999);
+    const tax=findNear([/מס\s*הכנסה/,/מס\s*ה/,/income\s*tax/i],10,20000);
+    const bituach=findNear([/ביטוח\s*לאומי/,/national\s*ins/i],10,10000);
+    const pension=findNear([/פנסי[האה]/,/קרן\s*פנסיה/,/pension/i],10,10000);
+    const health=findNear([/ביטוח\s*בריאות/,/קופ[ת]?\s*חולים/,/health\s*(?:ins)?/i],10,5000);
+    const hours=findNear([/סה[״"כ]\s*שעות/,/שעות\s*(?:עבודה|רגילות|חודש)/,/total\s*hours/i],50,350);
     const fields={};
     if(gross!=null) fields.gross=gross;
     if(net!=null) fields.net=net;
     if(tax!=null) fields.tax=tax;
     if(bituach!=null) fields.bituach=bituach;
     if(pension!=null) fields.pension=pension;
-    if(hours!=null) fields.hours=hours;
     if(health!=null) fields.health=health;
+    if(hours!=null) fields.hours=hours;
     return Object.keys(fields).length>0?fields:null;
   }
   async function addPaySlips(files){
@@ -1589,24 +1602,24 @@ function App(){
   const otPct=allRegHrs+allOtHrs>0?(allOtHrs/(allRegHrs+allOtHrs))*100:0;
   // TOC sections list
   const statSections=[
-    ...(slipsAnalyzed.length>0?[
-      {id:"stat-slip-income",label:"Income Trends",icon:"📈"},
-      {id:"stat-slip-deductions",label:"Tax & Deductions",icon:"🏦"},
-      {id:"stat-slip-insights",label:"Smart Insights",icon:"💡"},
-    ]:[]),
     ...(allArchived.length>0?[
       {id:"stat-earnings-avg",label:"Earnings Avg",icon:"💰"},
       {id:"stat-monthly-net",label:"Net by Month",icon:"📊"},
       {id:"stat-weekly-net",label:"Net by Week",icon:"📉"},
-    ]:[]),
-    {id:"stat-payslips",label:"Pay Slips",icon:"🗂"},
-    ...(allArchived.length>0?[
       {id:"stat-dayfreq",label:"Day Frequency",icon:"📅"},
       {id:"stat-morn-eve",label:"Morn/Eve",icon:"🌅"},
       {id:"stat-shift-len",label:"Shift Lengths",icon:"⏱"},
       ...(weeklyTrend.length>1?[{id:"stat-weekly-hrs",label:"Weekly Hrs",icon:"👥"}]:[]),
       {id:"stat-monthly-hrs",label:"Monthly Hrs",icon:"🗓"},
     ]:[]),
+  ];
+  const slipSections=[
+    ...(slipsAnalyzed.length>0?[
+      {id:"slip-income",label:"Income Trends",icon:"📈"},
+      {id:"slip-deductions",label:"Tax & Deductions",icon:"🏦"},
+      {id:"slip-insights",label:"Smart Insights",icon:"💡"},
+    ]:[]),
+    {id:"slip-list",label:"Pay Slips",icon:"🗂"},
   ];
   const scrollTo=id=>{const el=document.getElementById(id);if(el)el.scrollIntoView({behavior:"smooth",block:"start"});};
 
@@ -1687,7 +1700,7 @@ function App(){
 
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
-        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"]].map(([k,l])=>(
+        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"],["payslips","💳 Pay Slips"]].map(([k,l])=>(
           <button key={k} className="nav-tab" onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
             {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
           </button>
@@ -2543,11 +2556,11 @@ function App(){
         {/* ══════════════ STATISTICS TAB ══════════════ */}
         {mainTab==="statistics"&&(
           <div>
-            {allArchived.length===0&&paySlips.length===0?(
+            {allArchived.length===0?(
               <div style={{textAlign:"center",padding:"44px 20px",color:C.muted}}>
                 <div style={{fontSize:36,marginBottom:10}}>📊</div>
                 <div style={{fontFamily:sans,fontWeight:700,fontSize:13,color:C.text,marginBottom:5}}>No data yet</div>
-                <div style={{fontSize:11}}>Upload schedules in the Archive tab or pay slips below to get started</div>
+                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see shift statistics</div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -2565,137 +2578,6 @@ function App(){
                           <span>{sec.icon}</span><span>{sec.label}</span>
                         </button>
                       ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* ── Pay Slip: Income Trends ── */}
-                {slipsAnalyzed.length>0&&slipData.some(s=>s.net!=null||s.gross!=null)&&(
-                  <div id="stat-slip-income" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📈 Income Trends · Pay Slips</div>
-                    {/* Summary cards */}
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:7,marginBottom:12}}>
-                      {avgSlipGross>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.text}}>₪{Math.round(avgSlipGross).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Gross</div></div>}
-                      {avgSlipNet>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.green}}>₪{Math.round(avgSlipNet).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Net</div></div>}
-                      {slipWithNet.length>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.acc}}>{slipWithNet.length}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Pay Slips</div></div>}
-                      {incomeGrowth!==null&&<div style={{background:`${incomeGrowth>=0?C.green:C.red}15`,border:`1px solid ${incomeGrowth>=0?C.green:C.red}30`,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:incomeGrowth>=0?C.green:C.red}}>{incomeGrowth>=0?"+":""}{incomeGrowth.toFixed(1)}%</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Growth</div></div>}
-                    </div>
-                    {/* Monthly bars */}
-                    {slipData.map(s=>{
-                      const [yr,mo2]=s.month.split("-").map(Number);
-                      const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
-                      return(
-                        <div key={s.month} style={{marginBottom:8}}>
-                          <div style={{fontSize:9,color:C.muted,marginBottom:3}}>{lbl}</div>
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            {s.gross!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.muted}}>Gross</div><Bar value={s.gross} max={maxSlipChart} color={`${C.text}60`} height={5}/><div style={{width:52,fontSize:8,color:C.muted,textAlign:"right",flexShrink:0}}>₪{Math.round(s.gross).toLocaleString()}</div></div>}
-                            {s.net!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.green}}>Net</div><Bar value={s.net} max={maxSlipChart} color={C.green} height={8}/><div style={{width:52,fontSize:9,color:C.green,fontWeight:700,textAlign:"right",flexShrink:0}}>₪{Math.round(s.net).toLocaleString()}</div></div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div style={{display:"flex",gap:12,marginTop:4}}>
-                      {[[`${C.text}60`,"Gross"],[C.green,"Net"]].map(([c,l])=>(
-                        <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:C.muted}}><div style={{width:9,height:3,background:c,borderRadius:1}}/>{l}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* ── Pay Slip: Tax & Deductions ── */}
-                {slipsAnalyzed.length>0&&(totalTaxPaid>0||totalBituach>0||totalPension>0||avgNetPct>0)&&(
-                  <div id="stat-slip-deductions" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>🏦 Tax &amp; Deductions · Pay Slips</div>
-
-                    {/* Gross vs Net ratio bar */}
-                    {avgNetPct>0&&(
-                      <div style={{marginBottom:13}}>
-                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                          <span style={{fontSize:9,color:C.muted}}>Average take-home ratio</span>
-                          <span style={{fontSize:10,fontWeight:700,color:C.green}}>{avgNetPct.toFixed(0)}%</span>
-                        </div>
-                        <div style={{height:14,background:C.surface,borderRadius:7,overflow:"hidden",display:"flex"}}>
-                          <div style={{width:`${avgNetPct}%`,background:C.green,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:"#fff",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{avgNetPct.toFixed(0)}% take-home</span></div>
-                          <div style={{flex:1,background:`${C.red}50`,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:C.red,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{(100-avgNetPct).toFixed(0)}% deducted</span></div>
-                        </div>
-                        {avgSlipGross>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:8,color:C.muted}}>
-                          <span>Avg net ₪{Math.round(avgSlipNet).toLocaleString()}</span>
-                          <span>Avg deductions ₪{Math.round(avgSlipGross-avgSlipNet).toLocaleString()}</span>
-                        </div>}
-                      </div>
-                    )}
-
-                    {/* Deduction totals */}
-                    {[["Income Tax",totalTaxPaid,C.red],["Bituach Leumi",totalBituach,C.yellow],["Pension",totalPension,C.purple]].filter(([,v])=>v>0).map(([lbl,val,col])=>{
-                      const maxD=Math.max(totalTaxPaid,totalBituach,totalPension,1);
-                      return(
-                        <div key={lbl} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
-                          <div style={{width:74,fontSize:9,color:C.muted,flexShrink:0}}>{lbl}</div>
-                          <Bar value={val} max={maxD} color={col}/>
-                          <div style={{width:58,fontSize:9,color:col,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Per-month tax rate trend */}
-                    {taxSamples.length>1&&(
-                      <div style={{marginTop:10}}>
-                        <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Tax rate per month</div>
-                        {taxSamples.map(s=>{
-                          const rate=(s.tax/s.gross)*100;
-                          const [yr,mo2]=s.month.split("-").map(Number);
-                          const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
-                          return(
-                            <div key={s.month} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                              <div style={{width:44,fontSize:9,color:C.muted,flexShrink:0}}>{lbl}</div>
-                              <Bar value={rate} max={Math.max(...taxSamples.map(x=>(x.tax/x.gross)*100),20)} color={C.red}/>
-                              <div style={{width:34,fontSize:9,color:C.red,textAlign:"right",fontWeight:700,flexShrink:0}}>{rate.toFixed(1)}%</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Per-slip deduction breakdown */}
-                    {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).length>0&&(
-                      <div style={{marginTop:10}}>
-                        <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Per-slip deductions</div>
-                        {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).map(s=>{
-                          const [yr,mo2]=s.month.split("-").map(Number);
-                          const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
-                          const total=(s.tax||0)+(s.bituach||0)+(s.pension||0)+(s.health||0);
-                          return(
-                            <div key={s.month} style={{background:C.surface,borderRadius:7,padding:"7px 9px",marginBottom:5}}>
-                              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{fontSize:9,color:C.muted}}>{lbl}</span><span style={{fontSize:9,color:C.muted}}>Total deducted ₪{Math.round(total).toLocaleString()}</span></div>
-                              <div style={{display:"flex",gap:"4px 12px",flexWrap:"wrap"}}>
-                                {s.tax!=null&&<span style={{fontSize:9,color:C.red}}>Tax ₪{s.tax.toLocaleString()}{s.gross?` (${((s.tax/s.gross)*100).toFixed(1)}%)`:""}</span>}
-                                {s.bituach!=null&&<span style={{fontSize:9,color:C.yellow}}>Bituach ₪{s.bituach.toLocaleString()}</span>}
-                                {s.pension!=null&&<span style={{fontSize:9,color:C.purple}}>Pension ₪{s.pension.toLocaleString()}</span>}
-                                {s.health!=null&&<span style={{fontSize:9,color:C.acc}}>Health ₪{s.health.toLocaleString()}</span>}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ── Pay Slip: Smart Insights ── */}
-                {slipInsights.length>0&&(
-                  <div id="stat-slip-insights" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💡 Smart Insights</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                      {slipInsights.map((ins,i)=>(
-                        <div key={i} style={{background:`${ins.col}10`,border:`1px solid ${ins.col}25`,borderLeft:`3px solid ${ins.col}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}>
-                          <span style={{fontSize:14,flexShrink:0}}>{ins.icon}</span>
-                          <span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{ins.text}</span>
-                        </div>
-                      ))}
-                      {otPct>0&&<div style={{background:`${C.acc}10`,border:`1px solid ${C.acc}25`,borderLeft:`3px solid ${C.acc}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}>
-                        <span style={{fontSize:14,flexShrink:0}}>⚡</span>
-                        <span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{otPct.toFixed(0)}% of your work-hours are overtime (from archived shifts)</span>
-                      </div>}
                     </div>
                   </div>
                 )}
@@ -2746,62 +2628,6 @@ function App(){
                     ))}
                   </div>
                 )}
-
-                {/* ── Pay Slips list + upload ── */}
-                <div id="stat-payslips" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                  <input ref={slipInputRef} type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
-                    onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>🗂 Pay Slips</div>
-                    <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
-                      style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
-                      {paySlipUploading?"Uploading...":"+ Upload"}
-                    </button>
-                  </div>
-                  {slipMsg&&<div style={{background:slipMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${slipMsg.ok?C.green:C.red}30`,borderRadius:7,padding:"8px 12px",fontSize:10,color:slipMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:8,animation:"slideIn .2s ease"}}><span style={{flex:1}}>{slipMsg.text}</span><button onClick={()=>setSlipMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
-                  <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}}
-                    onDragLeave={()=>setSlipDragOver(false)}
-                    onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
-                    onClick={()=>!paySlipUploading&&slipInputRef.current?.click()}
-                    style={{border:`2px dashed ${slipDragOver?C.acc:C.border}`,borderRadius:8,padding:"12px",textAlign:"center",marginBottom:paySlips.length?10:0,cursor:"pointer",background:slipDragOver?`${C.acc}08`:"transparent",transition:"all .15s"}}>
-                    <div style={{fontSize:10,color:slipDragOver?C.acc:C.muted}}>{paySlipUploading?"Processing files…":"Drop PDF/image files here or click — multiple files supported"}</div>
-                  </div>
-                  {paySlips.length===0?(
-                    <div style={{textAlign:"center",padding:"6px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
-                  ):(
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {[...paySlips].reverse().map(sl=>{
-                        const a=sl.analysis;
-                        return(
-                          <div key={sl.id} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:8}}>
-                              <div style={{fontSize:15}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
-                              <div style={{flex:1,minWidth:0}}>
-                                <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
-                                <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
-                              </div>
-                              <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁 View</button>
-                              <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
-                            </div>
-                            {a&&(
-                              <div style={{display:"flex",flexWrap:"wrap",gap:"4px 10px",marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`}}>
-                                {a.gross!=null&&<span style={{fontSize:9,color:C.muted}}>Gross <span style={{color:C.text,fontWeight:700}}>₪{a.gross.toLocaleString()}</span></span>}
-                                {a.net!=null&&<span style={{fontSize:9,color:C.muted}}>Net <span style={{color:C.green,fontWeight:700}}>₪{a.net.toLocaleString()}</span></span>}
-                                {a.tax!=null&&<span style={{fontSize:9,color:C.muted}}>Tax <span style={{color:C.red,fontWeight:700}}>₪{a.tax.toLocaleString()}</span></span>}
-                                {a.bituach!=null&&<span style={{fontSize:9,color:C.muted}}>Bituach Leumi <span style={{color:C.yellow,fontWeight:700}}>₪{a.bituach.toLocaleString()}</span></span>}
-                                {a.pension!=null&&<span style={{fontSize:9,color:C.muted}}>Pension <span style={{color:C.purple,fontWeight:700}}>₪{a.pension.toLocaleString()}</span></span>}
-                                {a.health!=null&&<span style={{fontSize:9,color:C.muted}}>Health <span style={{color:C.acc,fontWeight:700}}>₪{a.health.toLocaleString()}</span></span>}
-                                {a.hours!=null&&<span style={{fontSize:9,color:C.muted}}>Hours <span style={{color:C.text,fontWeight:700}}>{a.hours}h</span></span>}
-                                {a.net!=null&&a.hours!=null&&a.hours>0&&<span style={{fontSize:9,color:C.muted}}>₪/h <span style={{color:C.acc,fontWeight:700}}>{(a.net/a.hours).toFixed(1)}</span></span>}
-                              </div>
-                            )}
-                            {!a&&sl.type==="application/pdf"&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>⚠ Re-upload to extract data</div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
 
                 {/* ── Day of Week ── */}
                 {allArchived.length>0&&(
@@ -2885,6 +2711,180 @@ function App(){
 
               </div>
             )}
+          </div>
+        )}
+
+        {/* ══════════════ PAY SLIPS TAB ══════════════ */}
+        {mainTab==="payslips"&&(
+          <div>
+            <input ref={slipInputRef} type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
+              onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
+
+            {slipMsg&&<div style={{background:slipMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${slipMsg.ok?C.green:C.red}30`,borderRadius:7,padding:"8px 12px",fontSize:10,color:slipMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12,animation:"slideIn .2s ease"}}><span style={{flex:1}}>{slipMsg.text}</span><button onClick={()=>setSlipMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
+
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+              {/* TOC */}
+              {slipSections.length>1&&(
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>Jump to section</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {slipSections.map(sec=>(
+                      <button key={sec.id} onClick={()=>scrollTo(sec.id)}
+                        style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,color:C.text,padding:"5px 11px",fontSize:10,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}
+                        onMouseOver={e=>{e.currentTarget.style.background=`${C.acc}18`;e.currentTarget.style.borderColor=`${C.acc}50`;e.currentTarget.style.color=C.acc;}}
+                        onMouseOut={e=>{e.currentTarget.style.background=C.surface;e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.text;}}>
+                        <span>{sec.icon}</span><span>{sec.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Income Trends ── */}
+              {slipsAnalyzed.length>0&&slipData.some(s=>s.net!=null||s.gross!=null)&&(
+                <div id="slip-income" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📈 Income Trends</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:7,marginBottom:12}}>
+                    {avgSlipGross>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.text}}>₪{Math.round(avgSlipGross).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Gross</div></div>}
+                    {avgSlipNet>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.green}}>₪{Math.round(avgSlipNet).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Net</div></div>}
+                    {slipWithNet.length>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.acc}}>{slipWithNet.length}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Pay Slips</div></div>}
+                    {incomeGrowth!==null&&<div style={{background:`${incomeGrowth>=0?C.green:C.red}15`,border:`1px solid ${incomeGrowth>=0?C.green:C.red}30`,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:incomeGrowth>=0?C.green:C.red}}>{incomeGrowth>=0?"+":""}{incomeGrowth.toFixed(1)}%</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Growth</div></div>}
+                  </div>
+                  {slipData.map(s=>{
+                    const [yr,mo2]=s.month.split("-").map(Number);
+                    const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
+                    return(
+                      <div key={s.month} style={{marginBottom:8}}>
+                        <div style={{fontSize:9,color:C.muted,marginBottom:3}}>{lbl}</div>
+                        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                          {s.gross!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.muted}}>Gross</div><Bar value={s.gross} max={maxSlipChart} color={`${C.text}60`} height={5}/><div style={{width:52,fontSize:8,color:C.muted,textAlign:"right",flexShrink:0}}>₪{Math.round(s.gross).toLocaleString()}</div></div>}
+                          {s.net!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.green}}>Net</div><Bar value={s.net} max={maxSlipChart} color={C.green} height={8}/><div style={{width:52,fontSize:9,color:C.green,fontWeight:700,textAlign:"right",flexShrink:0}}>₪{Math.round(s.net).toLocaleString()}</div></div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{display:"flex",gap:12,marginTop:4}}>
+                    {[[`${C.text}60`,"Gross"],[C.green,"Net"]].map(([c,l])=>(
+                      <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:C.muted}}><div style={{width:9,height:3,background:c,borderRadius:1}}/>{l}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Tax & Deductions ── */}
+              {slipsAnalyzed.length>0&&(totalTaxPaid>0||totalBituach>0||totalPension>0||avgNetPct>0)&&(
+                <div id="slip-deductions" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>🏦 Tax &amp; Deductions</div>
+                  {avgNetPct>0&&(
+                    <div style={{marginBottom:13}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <span style={{fontSize:9,color:C.muted}}>Average take-home ratio</span>
+                        <span style={{fontSize:10,fontWeight:700,color:C.green}}>{avgNetPct.toFixed(0)}%</span>
+                      </div>
+                      <div style={{height:14,background:C.surface,borderRadius:7,overflow:"hidden",display:"flex"}}>
+                        <div style={{width:`${avgNetPct}%`,background:C.green,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:"#fff",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{avgNetPct.toFixed(0)}% take-home</span></div>
+                        <div style={{flex:1,background:`${C.red}50`,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:C.red,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{(100-avgNetPct).toFixed(0)}% deducted</span></div>
+                      </div>
+                      {avgSlipGross>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:8,color:C.muted}}><span>Avg net ₪{Math.round(avgSlipNet).toLocaleString()}</span><span>Avg deductions ₪{Math.round(avgSlipGross-avgSlipNet).toLocaleString()}</span></div>}
+                    </div>
+                  )}
+                  {[["Income Tax",totalTaxPaid,C.red],["Bituach Leumi",totalBituach,C.yellow],["Pension",totalPension,C.purple]].filter(([,v])=>v>0).map(([lbl,val,col])=>{
+                    const maxD=Math.max(totalTaxPaid,totalBituach,totalPension,1);
+                    return(<div key={lbl} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}><div style={{width:74,fontSize:9,color:C.muted,flexShrink:0}}>{lbl}</div><Bar value={val} max={maxD} color={col}/><div style={{width:58,fontSize:9,color:col,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div></div>);
+                  })}
+                  {taxSamples.length>1&&(
+                    <div style={{marginTop:10}}>
+                      <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Tax rate per month</div>
+                      {taxSamples.map(s=>{
+                        const rate=(s.tax/s.gross)*100;
+                        const [yr,mo2]=s.month.split("-").map(Number);
+                        return(<div key={s.month} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}><div style={{width:44,fontSize:9,color:C.muted,flexShrink:0}}>{MONTHS[mo2-1]} '{String(yr).slice(2)}</div><Bar value={rate} max={Math.max(...taxSamples.map(x=>(x.tax/x.gross)*100),20)} color={C.red}/><div style={{width:34,fontSize:9,color:C.red,textAlign:"right",fontWeight:700,flexShrink:0}}>{rate.toFixed(1)}%</div></div>);
+                      })}
+                    </div>
+                  )}
+                  {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).length>0&&(
+                    <div style={{marginTop:10}}>
+                      <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Per-slip breakdown</div>
+                      {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).map(s=>{
+                        const [yr,mo2]=s.month.split("-").map(Number);
+                        const total=(s.tax||0)+(s.bituach||0)+(s.pension||0)+(s.health||0);
+                        return(<div key={s.month} style={{background:C.surface,borderRadius:7,padding:"7px 9px",marginBottom:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:9,color:C.muted}}>{MONTHS[mo2-1]} '{String(yr).slice(2)}</span><span style={{fontSize:9,color:C.muted}}>₪{Math.round(total).toLocaleString()} deducted</span></div><div style={{display:"flex",gap:"4px 12px",flexWrap:"wrap"}}>{s.tax!=null&&<span style={{fontSize:9,color:C.red}}>Tax ₪{s.tax.toLocaleString()}{s.gross?` (${((s.tax/s.gross)*100).toFixed(1)}%)`:""}</span>}{s.bituach!=null&&<span style={{fontSize:9,color:C.yellow}}>Bituach ₪{s.bituach.toLocaleString()}</span>}{s.pension!=null&&<span style={{fontSize:9,color:C.purple}}>Pension ₪{s.pension.toLocaleString()}</span>}{s.health!=null&&<span style={{fontSize:9,color:C.acc}}>Health ₪{s.health.toLocaleString()}</span>}</div></div>);
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Smart Insights ── */}
+              {(slipInsights.length>0||otPct>0)&&(
+                <div id="slip-insights" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💡 Smart Insights</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                    {slipInsights.map((ins,i)=>(
+                      <div key={i} style={{background:`${ins.col}10`,border:`1px solid ${ins.col}25`,borderLeft:`3px solid ${ins.col}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}>
+                        <span style={{fontSize:14,flexShrink:0}}>{ins.icon}</span>
+                        <span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{ins.text}</span>
+                      </div>
+                    ))}
+                    {otPct>0&&<div style={{background:`${C.acc}10`,border:`1px solid ${C.acc}25`,borderLeft:`3px solid ${C.acc}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}><span style={{fontSize:14,flexShrink:0}}>⚡</span><span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{otPct.toFixed(0)}% of your work-hours are overtime (from archived shifts)</span></div>}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Pay Slip list + upload ── */}
+              <div id="slip-list" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>🗂 Pay Slips</div>
+                  <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
+                    style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
+                    {paySlipUploading?"Uploading...":"+ Upload"}
+                  </button>
+                </div>
+                <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}} onDragLeave={()=>setSlipDragOver(false)}
+                  onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
+                  onClick={()=>!paySlipUploading&&slipInputRef.current?.click()}
+                  style={{border:`2px dashed ${slipDragOver?C.acc:C.border}`,borderRadius:8,padding:"12px",textAlign:"center",marginBottom:paySlips.length?10:0,cursor:"pointer",background:slipDragOver?`${C.acc}08`:"transparent",transition:"all .15s"}}>
+                  <div style={{fontSize:10,color:slipDragOver?C.acc:C.muted}}>{paySlipUploading?"Processing files…":"Drop PDF/image files here or click — multiple files supported"}</div>
+                </div>
+                {paySlips.length===0?(
+                  <div style={{textAlign:"center",padding:"14px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
+                ):(
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {[...paySlips].reverse().map(sl=>{
+                      const a=sl.analysis;
+                      return(
+                        <div key={sl.id} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{fontSize:15}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
+                              <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
+                            </div>
+                            <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁 View</button>
+                            <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
+                          </div>
+                          {a&&(
+                            <div style={{display:"flex",flexWrap:"wrap",gap:"4px 10px",marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`}}>
+                              {a.gross!=null&&<span style={{fontSize:9,color:C.muted}}>Gross <b style={{color:C.text}}>₪{a.gross.toLocaleString()}</b></span>}
+                              {a.net!=null&&<span style={{fontSize:9,color:C.muted}}>Net <b style={{color:C.green}}>₪{a.net.toLocaleString()}</b></span>}
+                              {a.tax!=null&&<span style={{fontSize:9,color:C.muted}}>Tax <b style={{color:C.red}}>₪{a.tax.toLocaleString()}</b></span>}
+                              {a.bituach!=null&&<span style={{fontSize:9,color:C.muted}}>Bituach <b style={{color:C.yellow}}>₪{a.bituach.toLocaleString()}</b></span>}
+                              {a.pension!=null&&<span style={{fontSize:9,color:C.muted}}>Pension <b style={{color:C.purple}}>₪{a.pension.toLocaleString()}</b></span>}
+                              {a.health!=null&&<span style={{fontSize:9,color:C.muted}}>Health <b style={{color:C.acc}}>₪{a.health.toLocaleString()}</b></span>}
+                              {a.hours!=null&&<span style={{fontSize:9,color:C.muted}}>Hours <b style={{color:C.text}}>{a.hours}h</b></span>}
+                              {a.net!=null&&a.hours!=null&&a.hours>0&&<span style={{fontSize:9,color:C.muted}}>₪/h <b style={{color:C.acc}}>{(a.net/a.hours).toFixed(1)}</b></span>}
+                            </div>
+                          )}
+                          {!a&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>⚠ Re-upload to extract data from this file</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+            </div>
           </div>
         )}
 
