@@ -81,6 +81,7 @@ const WEEK_PFX   = "yotam_week_";
 const CAL_KEY    = "shiftly_cal_id";
 const PAYSLIP_PFX= "yotam_payslip_";
 const PAYSLIP_IDX= "yotam_payslips";
+const LOC_KEY    = "shiftly_work_location";
 const DRIVE_API  = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_FILE_NAME = "shifts-tracker-data.json";
@@ -607,7 +608,7 @@ async function gcReq(token,method,path,body){
 function shiftGCalId(sh){
   return "shift"+sh.id.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,60);
 }
-function toGCal(sh){
+function toGCal(sh,loc){
   if(!sh.date)return null;
   const st=parseT(sh.startTime)||{h:18,m:0};
   const parts=sh.date.split("-").map(Number);
@@ -625,7 +626,7 @@ function toGCal(sh){
   const desc=[`${typeStr} ${shiftLabel}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
   const isFuture=sD>new Date();
   const reminders=isFuture?{useDefault:false,overrides:[{method:"popup",minutes:60},{method:"popup",minutes:30}]}:{useDefault:false,overrides:[]};
-  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders};
+  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders,...(loc?{location:loc}:{})};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -854,6 +855,7 @@ function App(){
         }catch{}
       }
       try{const r=await window.storage.get(PAYSLIP_IDX);if(r)setPaySlips(JSON.parse(r.value));}catch{}
+      try{const r=await window.storage.get(LOC_KEY);if(r&&r.value)setWorkLocation(r.value);}catch{}
     })();
     // Check URL hash for token (handles redirect back to this page)
     const fullUrl=window.location.href;
@@ -1028,6 +1030,10 @@ function App(){
   const [previewSlip, setPreviewSlip] = useState(null); // {name, type, blobUrl}
   const [slipDragOver, setSlipDragOver] = useState(false);
   const [slipMsg, setSlipMsg] = useState(null); // {ok, text}
+  const [workLocation, setWorkLocation] = useState("");
+  const [showLocEdit, setShowLocEdit] = useState(false);
+  const [locDraft, setLocDraft] = useState("");
+  const [reanalyzing, setReanalyzing] = useState(false);
   const slipInputRef = useRef(null);
 
   async function doReset(){
@@ -1199,7 +1205,7 @@ function App(){
     try{
       const gcalUpdates={};
       for(const sh of valid){
-        const ev=toGCal(sh);
+        const ev=toGCal(sh,workLocation);
         if(!ev){errors++;continue;}
         try{
           if(sh.gcalEventId){
@@ -1373,6 +1379,39 @@ function App(){
     if(previewSlip?.blobUrl) URL.revokeObjectURL(previewSlip.blobUrl);
     setPreviewSlip(null);
   }
+  async function saveLocation(loc){
+    const trimmed=loc.trim();
+    setWorkLocation(trimmed);
+    setShowLocEdit(false);
+    await window.storage.set(LOC_KEY,trimmed).catch(()=>{});
+  }
+  async function reanalyzePaySlips(){
+    if(reanalyzing) return;
+    setReanalyzing(true);
+    try{
+      let updated=[...paySlips];
+      let changed=0;
+      for(let i=0;i<updated.length;i++){
+        const sl=updated[i];
+        if(sl.type!=='application/pdf') continue;
+        try{
+          const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);
+          if(!r) continue;
+          const text=await extractPdfText(r.value);
+          const analysis=parsePaySlipText(text);
+          if(analysis){updated[i]={...sl,analysis};changed++;}
+        }catch{}
+      }
+      if(changed>0){
+        await window.storage.set(PAYSLIP_IDX,JSON.stringify(updated)).catch(()=>{});
+        setPaySlips(updated);
+        if(token) saveToDrive(token,shifts,dismissed,archiveIndex,weekData);
+        setSlipMsg({ok:true,text:`✓ Re-analyzed ${changed} pay slip${changed>1?"s":""}`});
+      }else{
+        setSlipMsg({ok:false,text:"No PDF files found on this device to re-analyze"});
+      }
+    }finally{setReanalyzing(false);}
+  }
 
   function buildGCalUrl(sh){
     const pay=calcPay(sh);
@@ -1411,7 +1450,7 @@ function App(){
       const next=[...shifts];
       for(let i=0;i<next.length;i++){
         const sh=next[i];
-        const ev=toGCal(sh);
+        const ev=toGCal(sh,workLocation);
         if(!ev)continue;
         try{
           if(sh.gcalEventId){
@@ -1466,7 +1505,7 @@ function App(){
         if(!wData?.myShifts?.length) continue;
         const wUpdates={};
         for(const sh of wData.myShifts){
-          const ev=toGCal(sh);
+          const ev=toGCal(sh,workLocation);
           if(!ev) continue;
           try{
             if(sh.gcalEventId){
@@ -1511,7 +1550,7 @@ function App(){
   }
   async function syncOne(id){
     if(!token)return;const sh=shifts.find(s=>s.id===id);if(!sh)return;
-    try{const ev=toGCal(sh);if(sh.gcalEventId){await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);}else{const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);await save(shifts.map(s=>s.id===id?{...s,gcalEventId:r.id}:s));}setGcMsg({ok:true,text:`✓ ${fmtDate(sh.date)} synced.`});}
+    try{const ev=toGCal(sh,workLocation);if(sh.gcalEventId){await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);}else{const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);await save(shifts.map(s=>s.id===id?{...s,gcalEventId:r.id}:s));}setGcMsg({ok:true,text:`✓ ${fmtDate(sh.date)} synced.`});}
     catch(e){setGcMsg({ok:false,text:`Failed: ${e.message}`});}
   }
 
@@ -1665,6 +1704,11 @@ function App(){
               {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
               <button onClick={()=>loadFromDrive(token)} disabled={driveStatus==="loading"} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
               <button onClick={saveNow} disabled={driveStatus==="saving"} title="Save all data to Google Drive now" style={{background:`${C.green}10`,border:`1px solid ${C.green}30`,borderRadius:7,color:C.green,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>💾 Save</button>
+              <button onClick={()=>{setLocDraft(workLocation);setShowLocEdit(v=>!v);}}
+                style={{background:workLocation?`${C.green}18`:`${C.dim}`,border:`1px solid ${workLocation?C.green:C.border}`,borderRadius:7,color:workLocation?C.green:C.muted,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                title={workLocation||"Set your work location for Google Calendar events"}>
+                📍 {workLocation?(workLocation.length>16?workLocation.slice(0,16)+"…":workLocation):"Set location"}
+              </button>
               {calendars.length>0&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.muted}}>Cal:</span><select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:140}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"📅 "+cal.name}</option>))}</select></div>}
               <button onClick={testToken} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:8,color:C.acc,padding:"8px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔍 Test</button>
               <button onClick={signOut} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>Sign out</button>
@@ -1697,6 +1741,22 @@ function App(){
           </div>
         );
       })()}
+
+      {/* ── Location edit panel ── */}
+      {showLocEdit&&(
+        <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",animation:"slideIn .2s ease"}}>
+          <span style={{fontSize:10,color:C.muted,fontFamily:mono,flexShrink:0}}>📍 Work location for calendar events:</span>
+          <input style={{...inp({fontSize:10,padding:"6px 10px"}),flex:1,minWidth:180,maxWidth:340}}
+            placeholder="e.g. 123 Main St, Tel Aviv"
+            value={locDraft}
+            onChange={e=>setLocDraft(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter")saveLocation(locDraft);if(e.key==="Escape")setShowLocEdit(false);}}
+            autoFocus/>
+          <button onClick={()=>saveLocation(locDraft)} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"6px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,flexShrink:0}}>Save</button>
+          {workLocation&&<button onClick={()=>saveLocation("")} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:7,color:C.red,padding:"6px 10px",fontSize:10,cursor:"pointer",fontFamily:mono,flexShrink:0}}>Clear</button>}
+          <button onClick={()=>setShowLocEdit(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"6px 10px",fontSize:10,cursor:"pointer",fontFamily:mono,flexShrink:0}}>✕</button>
+        </div>
+      )}
 
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
@@ -2834,12 +2894,21 @@ function App(){
 
               {/* ── Pay Slip list + upload ── */}
               <div id="slip-list" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:6,flexWrap:"wrap"}}>
                   <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>🗂 Pay Slips</div>
-                  <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
-                    style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
-                    {paySlipUploading?"Uploading...":"+ Upload"}
-                  </button>
+                  <div style={{display:"flex",gap:5,flexShrink:0}}>
+                    {paySlips.some(s=>s.type==='application/pdf')&&(
+                      <button onClick={reanalyzePaySlips} disabled={reanalyzing||paySlipUploading}
+                        title="Re-run PDF extraction on all stored pay slips (useful if analysis showed wrong values)"
+                        style={{background:`${C.yellow}15`,border:`1px solid ${C.yellow}30`,borderRadius:7,color:C.yellow,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:reanalyzing?0.5:1}}>
+                        {reanalyzing?"🔄 Analyzing…":"🔄 Re-analyze"}
+                      </button>
+                    )}
+                    <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
+                      style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
+                      {paySlipUploading?"Uploading...":"+ Upload"}
+                    </button>
+                  </div>
                 </div>
                 <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}} onDragLeave={()=>setSlipDragOver(false)}
                   onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
