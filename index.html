@@ -1034,6 +1034,8 @@ function App(){
   const [showLocEdit, setShowLocEdit] = useState(false);
   const [locDraft, setLocDraft] = useState("");
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [editingSlipId, setEditingSlipId] = useState(null);
+  const [slipEditBuf, setSlipEditBuf] = useState({});
   const slipInputRef = useRef(null);
 
   async function doReset(){
@@ -1296,6 +1298,55 @@ function App(){
       return text;
     }catch{return null;}
   }
+  const HEB_MONTHS=['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+  function extractMonthKey(t){
+    if(!t) return null;
+    const s=t.replace(/\s+/g,' ');
+    // Hebrew month name + 2 or 4 digit year
+    const reH=new RegExp(`(${HEB_MONTHS.join('|')})\\s*[\\u05F3']?\\s*(\\d{4}|\\d{2})`);
+    const mH=s.match(reH);
+    if(mH){const mo=(HEB_MONTHS.indexOf(mH[1])+1).toString().padStart(2,'0');const yr=mH[2].length===2?`20${mH[2]}`:mH[2];if(+yr>=2000&&+yr<=2099)return`${yr}-${mo}`;}
+    // Labeled: חודש/תקופה/לחודש + MM/YYYY
+    const reLbl=/(?:חוד[שש]|תקופה|לחודש|period|month)[^0-9\n]{0,20}(0?[1-9]|1[0-2])[\/.\-](20\d{2})/i;
+    const mL=s.match(reLbl);
+    if(mL)return`${mL[2]}-${mL[1].padStart(2,'0')}`;
+    // Bare MM/YYYY
+    const reBare=/\b(0[1-9]|1[0-2])\/(20\d{2})\b/;
+    const mB=s.match(reBare);
+    if(mB)return`${mB[2]}-${mB[1]}`;
+    return null;
+  }
+  async function loadTesseract(){
+    if(window.Tesseract) return window.Tesseract;
+    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    return window.Tesseract;
+  }
+  async function renderPdfPageToCanvas(dataUrl){
+    const pdfjsLib=await loadPdfJs();
+    const b64=dataUrl.split(',')[1];const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+    const page=await pdf.getPage(1);
+    const vp=page.getViewport({scale:2.0});
+    const canvas=document.createElement('canvas');canvas.width=vp.width;canvas.height=vp.height;
+    await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+    return canvas;
+  }
+  async function extractPdfTextFull(dataUrl){
+    const direct=await extractPdfText(dataUrl);
+    if(direct&&direct.trim().length>40) return direct;
+    try{
+      const canvas=await renderPdfPageToCanvas(dataUrl);
+      const Tesseract=await loadTesseract();
+      const{data:{text}}=await Tesseract.recognize(canvas,'heb+eng',{
+        workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/worker.min.js',
+        langPath:'https://tessdata.projectnaptha.com/4.0.0',
+        corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@4/tesseract-core.wasm.js',
+        logger:()=>{},
+      });
+      return text||direct;
+    }catch{return direct;}
+  }
   function parsePaySlipText(text){
     if(!text) return null;
     const t=text.replace(/\s+/g,' ');
@@ -1340,10 +1391,10 @@ function App(){
           const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
           const existingIdx=currentSlips.findIndex(s=>s.name===file.name);
           if(existingIdx!==-1) await window.storage.delete(PAYSLIP_PFX+currentSlips[existingIdx].id).catch(()=>{});
-          let analysis=null;
-          if(file.type==='application/pdf'){try{const text=await extractPdfText(base64);analysis=parsePaySlipText(text);}catch{}}
+          let analysis=null;let extractedMonthKey=null;
+          if(file.type==='application/pdf'){try{const text=await extractPdfTextFull(base64);analysis=parsePaySlipText(text);extractedMonthKey=extractMonthKey(text);}catch{}}
           const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-          const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7),analysis};
+          const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:extractedMonthKey||new Date().toISOString().slice(0,7),analysis};
           currentSlips=existingIdx!==-1?currentSlips.map((s,i)=>i===existingIdx?meta:s):[...currentSlips,meta];
           await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
         }catch(e){console.error('PaySlip upload failed:',file.name,e);}
@@ -1397,9 +1448,10 @@ function App(){
         try{
           const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);
           if(!r) continue;
-          const text=await extractPdfText(r.value);
+          const text=await extractPdfTextFull(r.value);
           const analysis=parsePaySlipText(text);
-          if(analysis){updated[i]={...sl,analysis};changed++;}
+          const mk=extractMonthKey(text);
+          if(analysis||mk){updated[i]={...sl,...(analysis?{analysis}:{}),...(mk?{monthKey:mk}:{})};changed++;}
         }catch{}
       }
       if(changed>0){
@@ -1411,6 +1463,29 @@ function App(){
         setSlipMsg({ok:false,text:"No PDF files found on this device to re-analyze"});
       }
     }finally{setReanalyzing(false);}
+  }
+  function startEditSlip(sl){
+    const a=sl.analysis||{};
+    setSlipEditBuf({month:sl.monthKey||'',gross:a.gross??'',net:a.net??'',tax:a.tax??'',bituach:a.bituach??'',pension:a.pension??'',health:a.health??'',hours:a.hours??''});
+    setEditingSlipId(sl.id);
+  }
+  async function saveSlipEdit(id){
+    const b=slipEditBuf;
+    const pf=v=>v===''||v===undefined?null:+v;
+    const analysis={};
+    if(pf(b.gross)!=null)analysis.gross=pf(b.gross);
+    if(pf(b.net)!=null)analysis.net=pf(b.net);
+    if(pf(b.tax)!=null)analysis.tax=pf(b.tax);
+    if(pf(b.bituach)!=null)analysis.bituach=pf(b.bituach);
+    if(pf(b.pension)!=null)analysis.pension=pf(b.pension);
+    if(pf(b.health)!=null)analysis.health=pf(b.health);
+    if(pf(b.hours)!=null)analysis.hours=pf(b.hours);
+    const monthKey=b.month||new Date().toISOString().slice(0,7);
+    const updated=paySlips.map(s=>s.id===id?{...s,monthKey,analysis:Object.keys(analysis).length>0?analysis:s.analysis}:s);
+    await window.storage.set(PAYSLIP_IDX,JSON.stringify(updated)).catch(()=>{});
+    setPaySlips(updated);
+    setEditingSlipId(null);
+    if(token)saveToDrive(token,shifts,dismissed,archiveIndex,weekData);
   }
 
   function buildGCalUrl(sh){
@@ -2922,18 +2997,43 @@ function App(){
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {[...paySlips].reverse().map(sl=>{
                       const a=sl.analysis;
+                      const isEditing=editingSlipId===sl.id;
                       return(
                         <div key={sl.id} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
                             <div style={{fontSize:15}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
                               <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
                             </div>
-                            <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁 View</button>
+                            <button onClick={()=>isEditing?setEditingSlipId(null):startEditSlip(sl)} style={{background:`${isEditing?C.yellow:C.acc}18`,border:`1px solid ${isEditing?C.yellow:C.acc}40`,borderRadius:6,color:isEditing?C.yellow:C.acc,padding:"4px 8px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{isEditing?"✕":"✏"}</button>
+                            <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 8px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁</button>
                             <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
                           </div>
-                          {a&&(
+                          {isEditing&&(
+                            <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
+                              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:7}}>
+                                <div style={{gridColumn:"1/-1"}}>
+                                  <div style={{fontSize:8,color:C.muted,marginBottom:3,textTransform:"uppercase",letterSpacing:"1px"}}>Month</div>
+                                  <input type="month" value={slipEditBuf.month} onChange={e=>setSlipEditBuf(b=>({...b,month:e.target.value}))}
+                                    style={{width:"100%",background:C.dim,border:`1px solid ${C.border}`,borderRadius:5,color:C.text,padding:"5px 7px",fontSize:11,fontFamily:mono}}/>
+                                </div>
+                                {[['gross','Gross ₪',C.text],['net','Net ₪',C.green],['tax','Tax ₪',C.red],['bituach','Bituach ₪',C.yellow],['pension','Pension ₪',C.purple],['health','Health ₪',C.acc],['hours','Hours',C.text]].map(([k,lbl,col])=>(
+                                  <div key={k}>
+                                    <div style={{fontSize:8,color:C.muted,marginBottom:3,textTransform:"uppercase",letterSpacing:"1px"}}>{lbl}</div>
+                                    <input type="number" value={slipEditBuf[k]} onChange={e=>setSlipEditBuf(b=>({...b,[k]:e.target.value}))}
+                                      placeholder="—" min="0"
+                                      style={{width:"100%",background:C.dim,border:`1px solid ${C.border}`,borderRadius:5,color:col,padding:"5px 7px",fontSize:11,fontFamily:mono}}/>
+                                  </div>
+                                ))}
+                              </div>
+                              <button onClick={()=>saveSlipEdit(sl.id)}
+                                style={{width:"100%",background:`${C.green}20`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>
+                                ✓ Save
+                              </button>
+                            </div>
+                          )}
+                          {!isEditing&&a&&(
                             <div style={{display:"flex",flexWrap:"wrap",gap:"4px 10px",marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`}}>
                               {a.gross!=null&&<span style={{fontSize:9,color:C.muted}}>Gross <b style={{color:C.text}}>₪{a.gross.toLocaleString()}</b></span>}
                               {a.net!=null&&<span style={{fontSize:9,color:C.muted}}>Net <b style={{color:C.green}}>₪{a.net.toLocaleString()}</b></span>}
@@ -2945,7 +3045,7 @@ function App(){
                               {a.net!=null&&a.hours!=null&&a.hours>0&&<span style={{fontSize:9,color:C.muted}}>₪/h <b style={{color:C.acc}}>{(a.net/a.hours).toFixed(1)}</b></span>}
                             </div>
                           )}
-                          {!a&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>⚠ Re-upload to extract data from this file</div>}
+                          {!isEditing&&!a&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>No data extracted — click ✏ to enter values manually</div>}
                         </div>
                       );
                     })}
