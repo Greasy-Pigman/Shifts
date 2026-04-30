@@ -1,7 +1,7 @@
 {
-  "name": "Shift Tracker",
-  "short_name": "Shifts",
-  "description": "Yotam's waiter shift tracker",
+  "name": "Shiftly",
+  "short_name": "Shiftly",
+  "description": "Shiftly — shift tracker and pay calculator",
   "start_url": "/Shifts/",
   "display": "standalone",
   "background_color": "#0F1117",

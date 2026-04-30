@@ -1,72 +1,4 @@
-<!DOCTYPE html>
-<html lang="he">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <meta name="theme-color" content="#0F1117"/>
-  <title>Shiftly</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0;}
-    html,body,#root{height:100%;background:#0F1117;color:#E2E8F0;}
-    input,button,textarea,select{font-family:inherit;}
-    #loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0F1117;color:#94A3B8;font-family:monospace;gap:12px;font-size:13px;z-index:999;}
-    #errbox{position:fixed;inset:0;background:#0F1117;color:#F87171;font-family:monospace;padding:20px;display:none;flex-direction:column;gap:8px;overflow:auto;font-size:11px;}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    ::-webkit-scrollbar{width:4px;}
-    ::-webkit-scrollbar-thumb{background:#2D3748;border-radius:2px;}
-    @media(min-width:1000px){#root{zoom:1.2;}}
-    @media(min-width:1400px){#root{zoom:1.4;}}
-  </style>
-</head>
-<body>
-<div id="loading">
-  <div style="width:36px;height:36px;border:3px solid #1E293B;border-top:3px solid #3B82F6;border-radius:50%;animation:spin 1s linear infinite"></div>
-  <div>Loading Shiftly...</div>
-  <div id="loadstep" style="font-size:10px;opacity:0.5">Initialising...</div>
-</div>
-<div id="errbox"></div>
-<div id="root"></div>
-
-<script>
-function showErr(title, detail) {
-  document.getElementById('loading').style.display='none';
-  var b=document.getElementById('errbox');
-  b.style.display='flex';
-  b.innerHTML='<strong style="font-size:18px;color:#F87171">'+title+'</strong><pre style="background:#1E293B;padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:10px">'+detail+'</pre>';
-}
-window.onerror=function(m,s,l,c,e){showErr('Runtime Error', m+'\nLine:'+l+'\n'+(e&&e.stack||''));return true;};
-window.onunhandledrejection=function(e){showErr('Promise Error',(e.reason&&e.reason.message)||String(e.reason));};
-
-document.getElementById('loadstep').textContent='Setting up storage...';
-window.storage={
-  get:async function(k){var v=localStorage.getItem(k);if(v===null)throw new Error('Not found: '+k);return{key:k,value:v};},
-  set:async function(k,v){try{localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v));return{key:k,value:v};}catch(e){return null;}},
-  delete:async function(k){localStorage.removeItem(k);return{key:k,deleted:true};},
-  list:async function(p){var keys=Object.keys(localStorage).filter(function(k){return!p||k.startsWith(p);});return{keys:keys};}
-};
-</script>
-
-<!-- Load React from unpkg (more reliable fallback) -->
-<script>
-document.getElementById('loadstep').textContent='Loading React...';
-</script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" 
-  onerror="showErr('Failed to load React','Could not load from unpkg. Check your internet connection.')">
-</script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
-  onerror="showErr('Failed to load ReactDOM','Could not load from unpkg.')">
-</script>
-<script>
-document.getElementById('loadstep').textContent='Loading compiler...';
-</script>
-<script src="https://unpkg.com/@babel/standalone@7.23.2/babel.min.js"
-  onerror="showErr('Failed to load Babel','Could not load JSX compiler from unpkg.')">
-</script>
-
-<script type="text/babel" data-presets="react,env">
-document.getElementById('loadstep').textContent = 'Starting app...';
-try {
-const { useState, useEffect, useRef, useCallback } = React;
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // ── Config ────────────────────────────────────────────────
 const CLIENT_ID  = "657282377889-dp61g88r0et9aoc7m20t2msf72fmb779.apps.googleusercontent.com";
@@ -78,10 +10,6 @@ const NOTIF_KEY  = "yotam_notif_dismissed";
 const ARCHIVE_KEY= "yotam_archive_index";
 const FILE_PFX   = "yotam_file_";
 const WEEK_PFX   = "yotam_week_";
-const CAL_KEY    = "shiftly_cal_id";
-const PAYSLIP_PFX= "yotam_payslip_";
-const PAYSLIP_IDX= "yotam_payslips";
-const LOC_KEY    = "shiftly_work_location";
 const DRIVE_API  = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_FILE_NAME = "shifts-tracker-data.json";
@@ -233,22 +161,8 @@ function calcShiftPay(sh, priorHrs=0){
   const isPremium=(sh.shiftType==="Holiday"||sh.shiftType==="Shabbat"||!!holidayRate(sh.date))&&erevQualifies;
   if(isPremium){
     const rate=sh.shiftType==="Holiday"?HOLIDAY_R:holidayRate(sh.date)||SHABBAT_R;
-    // Shabbat rate only applies until 18:00; after 18:00 it drops to normal rate
-    if(sh.shiftType==="Shabbat"&&s&&e){
-      const startMin=toMin(s), endMin=toMin(e)+(sh.crossesMidnight?1440:0);
-      if(startMin<18*60&&endMin>18*60+10){
-        const mornHrs=Math.max(0,(18*60-startMin)/60);
-        const evenHrs=Math.max(0,(endMin-18*60)/60);
-        const mornTips=parseFloat(sh.morningTips)||0;
-        const evenTips=parseFloat(sh.eveningTips)||0;
-        const tips=parseFloat(sh.myTipCash)||(mornTips||evenTips?(mornTips+evenTips):0);
-        const base=+(SHABBAT_R*mornHrs+BASE_RATE*evenHrs).toFixed(2);
-        return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),wage:+(base-PENSION*hrs).toFixed(2),tips,
-          breakdown:{base,ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true,shabbatSplit:true,mornHrs:+mornHrs.toFixed(2),evenHrs:+evenHrs.toFixed(2)}};
-      }
-    }
     const tips=parseFloat(sh.myTipCash)||0;
-    return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),wage:+(rate*hrs-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
+    return{hrs,gross:+(rate*hrs+tips).toFixed(2),net:+(rate*hrs+tips-PENSION*hrs).toFixed(2),tips,breakdown:{base:+(rate*hrs).toFixed(2),ot1:0,ot2:0,reg:hrs,otHrs1:0,otHrs2:0,threshold:hrs,isNight:false,isPremium:true}};
   }
   // Regular/OT calculation
   const night=isNightShift(sh.startTime,sh.endTime,sh.crossesMidnight);
@@ -260,7 +174,7 @@ function calcShiftPay(sh, priorHrs=0){
   const ot2Hrs=Math.max(0,hrs-regHrs-ot1Hrs);                        // 150% hours
   const base=regHrs*BASE_RATE + ot1Hrs*BASE_RATE*1.25 + ot2Hrs*BASE_RATE*1.5;
   const tips=parseFloat(sh.myTipCash)||0;
-  return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),wage:+(base-PENSION*hrs).toFixed(2),tips,
+  return{hrs,gross:+(base+tips).toFixed(2),net:+(base+tips-PENSION*hrs).toFixed(2),tips,
     breakdown:{base:+base.toFixed(2),ot1:+(ot1Hrs*BASE_RATE*1.25).toFixed(2),ot2:+(ot2Hrs*BASE_RATE*1.5).toFixed(2),
       reg:+regHrs.toFixed(2),otHrs1:+ot1Hrs.toFixed(2),otHrs2:+ot2Hrs.toFixed(2),threshold:thresh,isNight:night,isPremium:false}};
 }
@@ -608,7 +522,7 @@ async function gcReq(token,method,path,body){
 function shiftGCalId(sh){
   return "shift"+sh.id.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,60);
 }
-function toGCal(sh,loc){
+function toGCal(sh){
   if(!sh.date)return null;
   const st=parseT(sh.startTime)||{h:18,m:0};
   const parts=sh.date.split("-").map(Number);
@@ -617,16 +531,12 @@ function toGCal(sh,loc){
   const sD=new Date(yr,mo-1,dy,st.h,st.m);let eD;
   if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(yr,mo-1,dy,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
   else eD=new Date(sD.getTime()+6*3600000);
-  const pay=calcPay(sh);
+  const pay=calcPay(sh),status=shiftStatus(sh);
   const hol=getHoliday(sh.date);
-  const stH2=st.h,etH2=parseT(sh.endTime)?.h??0,etM2=parseT(sh.endTime)?.m??0;
-  const isDouble=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>10));
-  const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:isDouble?"[Double]":"[Shift]";
-  const shiftLabel=isDouble?"Double Shift":sh.shiftType;
-  const desc=[`${typeStr} ${shiftLabel}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
-  const isFuture=sD>new Date();
-  const reminders=isFuture?{useDefault:false,overrides:[{method:"popup",minutes:60},{method:"popup",minutes:30}]}:{useDefault:false,overrides:[]};
-  return{summary:`[${isDouble?"Double":sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},reminders,...(loc?{location:loc}:{})};
+  const typeStr=sh.shiftType==="Shabbat"?"[Shabbat]":sh.shiftType==="Holiday"?`[${hol?.[0]||"Holiday"}]`:"[Shift]";
+  const desc=[`${typeStr} ${sh.shiftType}`,`${sh.startTime||"?"}--${sh.endTime||"open"} (${shiftHrsNum(sh)||"?"}h)`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",sh.clockStatus==="confirmed"?"Clocked":"Scheduled",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n");
+  const colorId=status==="confirmed"?"2":sh.shiftType==="Shabbat"||sh.shiftType==="Holiday"?"11":"5";
+  return{id:shiftGCalId(sh),summary:`[${sh.shiftType}] ${sh.startTime||"?"}--${sh.endTime||"?"}${pay?` ${pay.net} net`:""}`,description:desc,start:{dateTime:sD.toISOString(),timeZone:"Asia/Jerusalem"},end:{dateTime:eD.toISOString(),timeZone:"Asia/Jerusalem"},colorId,reminders:{useDefault:false,overrides:[{method:"popup",minutes:60}]}};
 }
 function paycheckEv(yr,mo){
   const sD=new Date(yr,mo-1,9,9,0),eD=new Date(yr,mo-1,9,10,0),mn=sD.toLocaleString("en",{month:"long"});
@@ -651,60 +561,27 @@ function DoubleTipField({sh,hrs,partnerTips,partnerOk,partnerName,updFn,inpFn,co
   const isMorn=sh.doubleShiftIdx===0;
   const label=isMorn?"☀ Morning shift":"🌙 Evening shift";
   const col=isMorn?colors.yellow:colors.acc;
-  // Morning tip hours capped at 18:00 — minutes after 18:00 belong to evening pool
-  const tipsHrs=(()=>{
-    if(!isMorn) return hrs;
-    const et=parseT(sh.endTime);
-    if(et&&(et.h>18||(et.h===18&&et.m>0))){
-      const st=parseT(sh.startTime)||{h:0,m:0};
-      return Math.max(0,(18*60-(st.h*60+st.m))/60);
-    }
-    return hrs;
-  })();
   const tips=parseFloat(sh.myTipCash||"");
-  const baseRate=shiftBaseRate(sh);
-  const tipsPerHr=(!isNaN(tips)&&sh.myTipCash!==""&&tipsHrs>0)?(tips/tipsHrs):null;
-  const totalPerHr=tipsPerHr!=null?(baseRate+tipsPerHr):null;
-  const displayRate=totalPerHr!=null?totalPerHr.toFixed(2):baseRate.toFixed(2);
-  const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
-  const tipsDefaultVal=!isNaN(tips)&&sh.myTipCash!==""?tips.toFixed(2):"";
+  const hourly=(hrs>0&&!isNaN(tips)&&sh.myTipCash!==""&&sh.myTipCash!==undefined)?(tips/hrs).toFixed(2):null;
   const partnerTipsNum=parseFloat(partnerTips||"");
   const totalTips=(!isNaN(tips)&&sh.myTipCash!=="")?tips:null;
   const bothKnown=totalTips!==null&&!isNaN(partnerTipsNum)&&partnerTips!==""&&partnerTips!==undefined;
   const grandTotal=bothKnown?(totalTips+partnerTipsNum).toFixed(0):null;
   return(
     <div style={{gridColumn:"1 / -1",background:col+"10",border:"1px solid "+col+"30",borderRadius:8,padding:"10px 11px",marginBottom:4}}>
-      <div style={{fontSize:10,color:col,fontWeight:700,marginBottom:8}}>
-        {label} — {hrs.toFixed(1)}h{isMorn&&tipsHrs<hrs?` (${tipsHrs.toFixed(1)}h for tips)`:""}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+      <div style={{fontSize:10,color:col,fontWeight:700,marginBottom:8}}>{label} — {hrs.toFixed(1)}h</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
         <div style={{display:"flex",flexDirection:"column",gap:3}}>
-          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-          <div style={{background:colors.dim,border:"1px solid "+colors.border,borderRadius:6,color:tipsPerHr!=null?colors.text:colors.muted,padding:"7px 10px",fontSize:12,fontFamily:fontMono,letterSpacing:"-0.3px"}}>₪{displayRate}/h</div>
-          {tipsPerHr!=null&&<span style={{fontSize:8,color:colors.muted}}>₪{baseRate.toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-          {tipsPerHr==null&&<span style={{fontSize:8,color:colors.muted}}>base rate</span>}
+          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isMorn?"☀":"🌙"} Tips ₪ cash</label>
+          <input key={"t"+sh.id} style={inpFn()} placeholder="0" defaultValue={sh.myTipCash||""}
+            onBlur={e=>{const v=parseFloat(e.target.value.trim());updFn(sh.id,{myTipCash:isNaN(v)?"":v+""});}}/>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:3}}>
-          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
-          <input key={"dh_"+sh.id+"_"+sh.myTipCash} style={inpFn({color:totalPerHr!=null?colors.text:colors.muted})} placeholder={"₪"+baseRate+"/h"}
-            defaultValue={hrlyDefaultVal}
-            onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-            onBlur={e=>{
-              const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-              if(isNaN(raw)||tipsHrs<=0){e.target.value=hrlyDefaultVal;return;}
-              const tipRate=raw>baseRate?raw-baseRate:0;
-              updFn(sh.id,{myTipCash:+(tipRate*tipsHrs).toFixed(2)+""});
-            }}/>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:3}}>
-          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
-          <input key={"dt_"+sh.id+"_"+sh.myTipCash} style={inpFn({color:tipsPerHr!=null?colors.text:colors.muted})} placeholder="0"
-            defaultValue={tipsDefaultVal}
-            onFocus={e=>{e.target.select();}}
-            onBlur={e=>{
-              const raw=parseFloat(e.target.value.trim());
-              if(isNaN(raw)){return;}
-              updFn(sh.id,{myTipCash:+(raw).toFixed(2)+""});
-            }}/>
+          <label style={{fontSize:9,color:colors.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isMorn?"☀":"🌙"} ₪/h tip rate</label>
+          <input key={"h"+sh.id} style={inpFn()} placeholder="0"
+            defaultValue={hourly||""}
+            onBlur={e=>{const r=parseFloat(e.target.value.trim());if(!isNaN(r)&&hrs>0){const br=shiftBaseRate(sh);const tipRate=r>br?r-br:r;updFn(sh.id,{myTipCash:(tipRate*hrs).toFixed(2)+""}); }}}/>
+          {hourly&&<span style={{fontSize:8,color:colors.muted}}>= ₪{isNaN(tips)?0:tips.toFixed(0)} total</span>}
         </div>
       </div>
       {bothKnown&&(
@@ -719,57 +596,56 @@ function DoubleTipField({sh,hrs,partnerTips,partnerOk,partnerName,updFn,inpFn,co
 }
 
 // ── Google Drive persistence helpers ──────────────────────────────────────
-async function driveErrMsg(r){
-  try{const e=await r.json();return e?.error?.message||`HTTP ${r.status}`;}catch{return `HTTP ${r.status}`;}
-}
 async function driveFind(token, name){
   const q=encodeURIComponent(`name='${name}' and trashed=false`);
   const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name,modifiedTime)`,
     {headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) throw new Error(await driveErrMsg(r));
+  if(!r.ok) return null;
   const d=await r.json();
   return d.files?.[0]||null;
 }
+
 async function driveRead(token, fileId){
   const r=await fetch(`${DRIVE_API}/files/${fileId}?alt=media`,
     {headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) throw new Error(await driveErrMsg(r));
-  return r.json();
-}
-async function driveWrite(token, fileId, data){
-  const body=JSON.stringify(data);
-  if(fileId){
-    const r=await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`,{
-      method:"PATCH",
-      headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
-      body});
-    if(r.status===404||r.status===410) return {_gone:true};
-    if(!r.ok) throw new Error(await driveErrMsg(r));
-    return r.json();
-  }
-  // Create new file — correct multipart format (no extra blank lines)
-  const meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
-  const boundary="shifts_tracker_boundary";
-  const multipart=[
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    meta,
-    `--${boundary}`,
-    "Content-Type: application/json",
-    "",
-    body,
-    `--${boundary}--`
-  ].join("\r\n");
-  const r=await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart`,{
-    method:"POST",
-    headers:{Authorization:`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},
-    body:multipart});
-  if(!r.ok) throw new Error(await driveErrMsg(r));
+  if(!r.ok) return null;
   return r.json();
 }
 
-function App(){
+async function driveWrite(token, fileId, data){
+  const body=JSON.stringify(data);
+  const url=fileId
+    ? `${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`
+    : `${DRIVE_UPLOAD}/files?uploadType=multipart`;
+  if(fileId){
+    // Update existing file
+    const r=await fetch(url,{method:"PATCH",
+      headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+      body});
+    return r.ok?await r.json():null;
+  } else {
+    // Create new file with metadata
+    const meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
+    const boundary="shifts_tracker_boundary";
+    const multipart=[
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",meta,"",
+      `--${boundary}`,
+      "Content-Type: application/json",
+      "",body,
+      `--${boundary}--`
+    ].join("\r\n");
+    const r=await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart`,{
+      method:"POST",
+      headers:{Authorization:`Bearer ${token}`,
+        "Content-Type":`multipart/related; boundary=${boundary}`},
+      body:multipart});
+    return r.ok?await r.json():null;
+  }
+}
+
+export default function App(){
   // Tracker state
   const [shifts,    setShifts]    = useState([]);
   const [dismissed, setDismissed] = useState([]);
@@ -807,7 +683,7 @@ function App(){
     setImporting(val);
   }
   // Main nav
-  const [mainTab,   setMainTab]   = useState("tracker"); // tracker | archive | statistics
+  const [mainTab,   setMainTab]   = useState("tracker"); // tracker | archive | patterns
   const calIdRef = useRef("primary");
   const driveFileIdRef = useRef(null);
   const driveSaveTimerRef = useRef(null);
@@ -836,26 +712,19 @@ function App(){
     (async()=>{
       try{const r=await window.storage.get(SHIFTS_KEY);if(r)setShifts(JSON.parse(r.value));}catch{}
       try{const r=await window.storage.get(NOTIF_KEY);if(r)setDismissed(JSON.parse(r.value));}catch{}
-      try{const r=await window.storage.get(CAL_KEY);if(r&&r.value){setCalendarId(r.value);calIdRef.current=r.value;}}catch{}
-      let driveLoaded=false;
       try{const r=await window.storage.get(TOKEN_KEY);if(r){const sv=JSON.parse(r.value);if(sv.expiry>Date.now()){setToken(sv.token);setEmail(sv.email);if(sv.calendarId){setCalendarId(sv.calendarId);calIdRef.current=sv.calendarId;}fetchCalendars(sv.token);
           // Restore from Drive — overrides local storage if Drive has data
-          driveLoaded=await loadFromDrive(sv.token);
+          const driveLoaded=await loadFromDrive(sv.token);
           if(!driveLoaded){
-            // Fall back to local storage for shifts
+            // Fall back to local storage
             try{const sr=await window.storage.get(SHIFTS_KEY);if(sr)setShifts(JSON.parse(sr.value));}catch{}
           }}}}catch{}
-      if(!driveLoaded){
-        // Load archive from localStorage only when Drive didn't supply it
-        try{
-          const r=await window.storage.get(ARCHIVE_KEY);if(!r)return;
-          const index=JSON.parse(r.value);setArchiveIndex(index);
-          const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
-          setWeekData(data);
-        }catch{}
-      }
-      try{const r=await window.storage.get(PAYSLIP_IDX);if(r)setPaySlips(JSON.parse(r.value));}catch{}
-      try{const r=await window.storage.get(LOC_KEY);if(r&&r.value)setWorkLocation(r.value);}catch{}
+      try{
+        const r=await window.storage.get(ARCHIVE_KEY);if(!r)return;
+        const index=JSON.parse(r.value);setArchiveIndex(index);
+        const data={};for(const key of index){try{const wr=await window.storage.get(WEEK_PFX+key);if(wr)data[key]=JSON.parse(wr.value);}catch{}}
+        setWeekData(data);
+      }catch{}
     })();
     // Check URL hash for token (handles redirect back to this page)
     const fullUrl=window.location.href;
@@ -900,33 +769,24 @@ function App(){
 
   function connectToken(t,exp){
     setToken(t);
-    // Restore previously chosen calendar before saving token — connectToken runs
-    // synchronously on OAuth redirect before the async storage load completes,
-    // so calIdRef may still be "primary". Reading CAL_KEY here preserves the choice.
-    const saveToken=(email)=>{
-      window.storage.get(CAL_KEY).then(r=>{
-        if(r&&r.value&&calIdRef.current==="primary"){calIdRef.current=r.value;setCalendarId(r.value);}
-        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email,calendarId:calIdRef.current})).catch(()=>{});
-      }).catch(()=>{
-        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email,calendarId:calIdRef.current})).catch(()=>{});
-      });
-    };
+    
     fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:`Bearer ${t}`}})
       .then(r=>r.json()).then(d=>{
         setEmail(d.email);
         setAuthToast({ok:true, text:`✓ Connected as ${d.email}`});
         setTimeout(()=>setAuthToast(null), 4000);
-        saveToken(d.email);
+        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email:d.email,calendarId:calIdRef.current})).catch(()=>{});
+        // Load persisted data from Google Drive
         loadFromDrive(t);
       }).catch(()=>{
         setAuthToast({ok:true, text:"✓ Google Calendar connected!"});
         setTimeout(()=>setAuthToast(null), 4000);
-        saveToken(null);
+        window.storage.set(TOKEN_KEY,JSON.stringify({token:t,expiry:exp,email:null,calendarId:calIdRef.current})).catch(()=>{});
       });
     fetchCalendars(t);
   }
 
-  function buildAuthUrl(){const redirectUri=window.location.href.split('#')[0];const p=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:redirectUri,response_type:"token",scope:SCOPES,prompt:"consent"});return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;}
+  function buildAuthUrl(){const p=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:"https://claude.ai",response_type:"token",scope:SCOPES,prompt:"consent"});return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;}
   function signIn(){
     const url=buildAuthUrl();
     // Try opening in new tab — on mobile Claude app may intercept
@@ -942,66 +802,56 @@ function App(){
   async function loadFromDrive(token){
     setDriveStatus("loading");
     try{
-      const file=await driveFind(token, DRIVE_FILE_NAME).catch(()=>null);
+      const file=await driveFind(token, DRIVE_FILE_NAME);
       if(!file){setDriveStatus("idle");return false;}
       driveFileIdRef.current=file.id;
       const data=await driveRead(token, file.id);
       if(!data){setDriveStatus("error");setDriveError("Could not read Drive file");return false;}
-      // Restore all state from Drive AND mirror to localStorage so refresh works
-      if(data.shifts){setShifts(data.shifts);await window.storage.set(SHIFTS_KEY,JSON.stringify(data.shifts)).catch(()=>{});}
-      if(data.dismissed){setDismissed(data.dismissed);await window.storage.set(NOTIF_KEY,JSON.stringify(data.dismissed)).catch(()=>{});}
+      // Restore all state from Drive
+      if(data.shifts) setShifts(data.shifts);
+      if(data.dismissed) setDismissed(data.dismissed);
       if(data.archiveIndex){
         setArchiveIndex(data.archiveIndex);
-        await window.storage.set(ARCHIVE_KEY,JSON.stringify(data.archiveIndex)).catch(()=>{});
-        if(data.weekData){
-          setWeekData(data.weekData);
-          for(const [wKey,wData] of Object.entries(data.weekData)){
-            await window.storage.set(WEEK_PFX+wKey,JSON.stringify(wData)).catch(()=>{});
-          }
-        }
+        if(data.weekData) setWeekData(data.weekData);
       }
-      if(Array.isArray(data.paySlips)&&data.paySlips.length>0){
-        setPaySlips(data.paySlips);
-        await window.storage.set(PAYSLIP_IDX,JSON.stringify(data.paySlips)).catch(()=>{});
-      }
-      setDriveStatus("saved");setDriveError(null);
+      setDriveStatus("saved");
+      setDriveError(null);
       return true;
     }catch(e){
-      setDriveStatus("error");setDriveError(e.message);
+      setDriveStatus("error");
+      setDriveError(e.message);
       return false;
     }
   }
 
-  async function saveNow(){
-    if(!token)return;
-    clearTimeout(driveSaveTimerRef.current);
-    setDriveStatus("saving");
-    try{
-      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
-      let result=await driveWrite(token,driveFileIdRef.current,payload);
-      if(result?._gone){
-        // File was deleted from Drive — create a new one
-        driveFileIdRef.current=null;
-        result=await driveWrite(token,null,payload);
-      }
-      driveFileIdRef.current=result?.id||driveFileIdRef.current;
-      setDriveStatus("saved");setDriveError(null);
-    }catch(e){setDriveStatus("error");setDriveError(e.message);}
-  }
-
   async function saveToDrive(token, shiftsData, dismissedData, archiveIndexData, weekDataData){
-    if(!token) return;
+    if(!token||!driveStatus) return;
+    // Debounce: wait 2s after last change before saving
     clearTimeout(driveSaveTimerRef.current);
     driveSaveTimerRef.current=setTimeout(async()=>{
       setDriveStatus("saving");
       try{
-        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
-        let result=await driveWrite(token,driveFileIdRef.current,payload);
-        if(result?._gone){driveFileIdRef.current=null;result=await driveWrite(token,null,payload);}
-        driveFileIdRef.current=result?.id||driveFileIdRef.current;
-        setDriveStatus("saved");setDriveError(null);
-      }catch(e){setDriveStatus("error");setDriveError(e.message);}
-    },2000);
+        const payload={
+          shifts: shiftsData,
+          dismissed: dismissedData,
+          archiveIndex: archiveIndexData,
+          weekData: weekDataData,
+          savedAt: new Date().toISOString(),
+          version: "v69",
+        };
+        const result=await driveWrite(token, driveFileIdRef.current, payload);
+        if(result){
+          if(!driveFileIdRef.current) driveFileIdRef.current=result.id;
+          setDriveStatus("saved");
+        } else {
+          setDriveStatus("error");
+          setDriveError("Save failed");
+        }
+      }catch(e){
+        setDriveStatus("error");
+        setDriveError(e.message);
+      }
+    }, 2000);
   }
   function testToken(){
     setGcMsg(null);
@@ -1022,32 +872,20 @@ function App(){
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [weekSyncing, setWeekSyncing] = useState(false);
   const [weekSyncMsg, setWeekSyncMsg] = useState(null);
-  const [weekDeleting, setWeekDeleting] = useState(false);
-  const [weekDeleteMsg, setWeekDeleteMsg] = useState(null);
-  const [archiveEditMode, setArchiveEditMode] = useState(false);
-  const [paySlips, setPaySlips] = useState([]);
-  const [paySlipUploading, setPaySlipUploading] = useState(false);
-  const [previewSlip, setPreviewSlip] = useState(null); // {name, type, blobUrl}
-  const [slipDragOver, setSlipDragOver] = useState(false);
-  const [slipMsg, setSlipMsg] = useState(null); // {ok, text}
-  const [workLocation, setWorkLocation] = useState("");
-  const [showLocEdit, setShowLocEdit] = useState(false);
-  const [locDraft, setLocDraft] = useState("");
-  const [reanalyzing, setReanalyzing] = useState(false);
-  const slipInputRef = useRef(null);
+  const [showIcsPanel, setShowIcsPanel] = useState(false);
+  const [icsContent, setIcsContent] = useState("");
+  const [icsCopied, setIcsCopied] = useState(false); // 0=hidden, 1=confirm1, 2=confirm2
 
   async function doReset(){
-    const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY,PAYSLIP_IDX];
+    const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY];
     for(const k of keys) await window.storage.delete(k).catch(()=>{});
     for(const key of archiveIndex){
       await window.storage.delete(FILE_PFX+key).catch(()=>{});
       await window.storage.delete(WEEK_PFX+key).catch(()=>{});
     }
-    for(const s of paySlips) await window.storage.delete(PAYSLIP_PFX+s.id).catch(()=>{});
     setShifts([]);setDismissed([]);setToken(null);setEmail(null);
     setCalendars([]);setCalendarId("primary");setGcMsg(null);
     setArchiveIndex([]);setWeekData({});setSelWeek(null);
-    setPaySlips([]);
     setArchiveView("timeline");setMainTab("tracker");
     setImpMsg(null);setArchiveMsg(null);setResetStep(0);
     setImporting(false);setSyncing(false);
@@ -1058,7 +896,7 @@ function App(){
     try{const p=new URLSearchParams(raw.includes("#")?raw.split("#")[1]:raw.replace(/^[?#]/,""));const t=p.get("access_token");if(!t){setPasteErr("No access_token found");return;}const exp=Date.now()+(parseInt(p.get("expires_in")||"3600")*1000);connectToken(t,exp);setPasteUrl("");}
     catch(e){setPasteErr("Could not parse: "+e.message);}
   }
-  function changeCalendar(id){setCalendarId(id);calIdRef.current=id;window.storage.set(CAL_KEY,id).catch(()=>{});window.storage.get(TOKEN_KEY).then(r=>{if(r){const sv=JSON.parse(r.value);sv.calendarId=id;window.storage.set(TOKEN_KEY,JSON.stringify(sv)).catch(()=>{});}}).catch(()=>{});}
+  function changeCalendar(id){setCalendarId(id);calIdRef.current=id;window.storage.get(TOKEN_KEY).then(r=>{if(r){const sv=JSON.parse(r.value);sv.calendarId=id;window.storage.set(TOKEN_KEY,JSON.stringify(sv)).catch(()=>{});}}).catch(()=>{});}
 
   function dedupeShifts(list){
     // Remove duplicates: keep the most complete version for each date+approximate_start
@@ -1088,28 +926,6 @@ function App(){
   },[token, dismissed, archiveIndex, weekData]);
   const saveDis=useCallback(async d=>{setDismissed(d);try{await window.storage.set(NOTIF_KEY,JSON.stringify(d));}catch{}},[]);
   const upd=useCallback(async(id,patch)=>{const next=shifts.map(s=>{if(s.id!==id)return s;const u={...s,...patch};if(patch.endTime&&parseT(patch.endTime)){const sm=parseT(s.startTime),em=parseT(patch.endTime);u.crossesMidnight=!!(em&&sm&&toMin(em)<toMin(sm));}return u;});await save(next);},[shifts,save]);
-
-  const updArchive = useCallback(async (weekKey, shiftId, patch) => {
-    const wData = weekData[weekKey];
-    if (!wData) return;
-    const newShifts = wData.myShifts.map(s => {
-      if (s.id !== shiftId) return s;
-      const u = {...s, ...patch};
-      if (patch.endTime !== undefined) {
-        const sm = parseT(s.startTime), em = parseT(patch.endTime);
-        u.crossesMidnight = !!(em && sm && toMin(em) < toMin(sm));
-      }
-      return u;
-    });
-    const newWData = {...wData, myShifts: newShifts};
-    const newWeekData = {...weekData, [weekKey]: newWData};
-    setWeekData(newWeekData);
-    await window.storage.set(WEEK_PFX + weekKey, JSON.stringify(newWData)).catch(() => {});
-    if(token) saveToDrive(token, shifts, dismissed, archiveIndex, newWeekData);
-    // Also update main shifts state if this shift exists there
-    const inMain = shifts.find(s => s.id === shiftId);
-    if (inMain) await upd(shiftId, patch);
-  }, [weekData, shifts, upd, token, dismissed, archiveIndex]);
 
   // ── Archive: upload schedule ──
   async function onArchiveFile(e){
@@ -1159,7 +975,6 @@ function App(){
     if(mergedShifts!==null)await save(mergedShifts);
     await window.storage.set(ARCHIVE_KEY,JSON.stringify(newIndex));
     setArchiveIndex(newIndex);setWeekData(newWeekData);
-    if(token) saveToDrive(token, mergedShifts!==null?dedupeShifts(mergedShifts):shifts, dismissed, newIndex, newWeekData);
     const ok=results.filter(r=>r.ok);
     const skipped=results.filter(r=>!r.ok);
     let msg="";
@@ -1189,228 +1004,21 @@ function App(){
     if(!confirm("Delete this week's archive?"))return;
     await window.storage.delete(FILE_PFX+key).catch(()=>{});await window.storage.delete(WEEK_PFX+key).catch(()=>{});
     const ni=archiveIndex.filter(k=>k!==key);await window.storage.set(ARCHIVE_KEY,JSON.stringify(ni));
-    const newWD={...weekData};delete newWD[key];
-    setArchiveIndex(ni);setWeekData(newWD);
-    if(token) saveToDrive(token, shifts, dismissed, ni, newWD);
+    setArchiveIndex(ni);setWeekData(prev=>{const n={...prev};delete n[key];return n;});
     if(selWeek===key){setSelWeek(null);setArchiveView("timeline");}
   }
 
   // ── Google Calendar sync ──
-  async function syncWeek(weekShifts){
-    if(!token){setWeekSyncMsg({ok:false,text:"Sign in to Google first"});return;}
+  function syncWeek(weekShifts){
+    // Google API is blocked in sandboxed iframe — open each shift as a Google Cal event link
+    // User reviews and saves each one in Google Calendar
     const valid=weekShifts.filter(sh=>sh.date&&sh.startTime);
     if(!valid.length){setWeekSyncMsg({ok:false,text:"No shifts to sync"});return;}
-    setWeekSyncing(true);setWeekSyncMsg(null);
-    let created=0,updated=0,errors=0;
-    try{
-      const gcalUpdates={};
-      for(const sh of valid){
-        const ev=toGCal(sh,workLocation);
-        if(!ev){errors++;continue;}
-        try{
-          if(sh.gcalEventId){
-            try{
-              await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
-              updated++;
-            }catch(e){
-              if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
-                const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-                gcalUpdates[sh.id]=r.id;created++;
-              }else{errors++;}
-            }
-          }else{
-            const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-            gcalUpdates[sh.id]=r.id;created++;
-          }
-        }catch{errors++;}
-      }
-      if(Object.keys(gcalUpdates).length>0&&selWeek&&weekData[selWeek]){
-        const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s)};
-        const updWD2={...weekData,[selWeek]:updWData};
-        setWeekData(updWD2);
-        await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
-        saveToDrive(token, shifts, dismissed, archiveIndex, updWD2);
-      }
-      const nextMain=shifts.map(s=>gcalUpdates[s.id]?{...s,gcalEventId:gcalUpdates[s.id]}:s);
-      if(nextMain.some((s,i)=>s!==shifts[i]))await save(nextMain);
-      const parts=[];
-      if(created)parts.push(`${created} created`);
-      if(updated)parts.push(`${updated} updated`);
-      if(errors)parts.push(`${errors} failed`);
-      setWeekSyncMsg({ok:errors===0,text:`✓ ${parts.join(", ")}`});
-    }catch(e){
-      setWeekSyncMsg({ok:false,text:`Sync failed: ${e.message}`});
-    }finally{
-      setWeekSyncing(false);
-    }
-  }
-
-  async function deleteWeekFromGCal(weekShifts){
-    if(!token){setWeekDeleteMsg({ok:false,text:"Sign in to Google first"});return;}
-    const withId=weekShifts.filter(sh=>sh.gcalEventId);
-    if(!withId.length){setWeekDeleteMsg({ok:false,text:"No synced events to delete"});return;}
-    setWeekDeleting(true);setWeekDeleteMsg(null);
-    let deleted=0,errors=0;
-    try{
-      const cleared={};
-      for(const sh of withId){
-        try{
-          await gcReq(token,"DELETE",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`);
-          cleared[sh.id]=true;deleted++;
-        }catch(e){
-          if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
-            cleared[sh.id]=true;deleted++;
-          }else{errors++;}
-        }
-      }
-      if(Object.keys(cleared).length>0&&selWeek&&weekData[selWeek]){
-        const updWData={...weekData[selWeek],myShifts:(weekData[selWeek].myShifts||[]).map(s=>cleared[s.id]?{...s,gcalEventId:null}:s)};
-        const updWD3={...weekData,[selWeek]:updWData};
-        setWeekData(updWD3);
-        await window.storage.set(WEEK_PFX+selWeek,JSON.stringify(updWData)).catch(()=>{});
-        saveToDrive(token, shifts, dismissed, archiveIndex, updWD3);
-      }
-      setWeekDeleteMsg({ok:errors===0,text:`🗑 ${deleted} deleted${errors?`, ${errors} failed`:""}`});
-    }catch(e){
-      setWeekDeleteMsg({ok:false,text:`Delete failed: ${e.message}`});
-    }finally{
-      setWeekDeleting(false);
-    }
-  }
-
-  async function loadPdfJs(){
-    if(window.pdfjsLib) return window.pdfjsLib;
-    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    return window.pdfjsLib;
-  }
-  async function extractPdfText(dataUrl){
-    try{
-      const pdfjsLib=await loadPdfJs();
-      const b64=dataUrl.split(',')[1];
-      const bin=atob(b64);const bytes=new Uint8Array(bin.length);
-      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-      const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
-      let text='';
-      for(let p=1;p<=pdf.numPages;p++){const page=await pdf.getPage(p);const c=await page.getTextContent();text+=c.items.map(it=>it.str).join(' ')+'\n';}
-      return text;
-    }catch{return null;}
-  }
-  function parsePaySlipText(text){
-    if(!text) return null;
-    const t=text.replace(/\s+/g,' ');
-    // Find the largest number within an 80-char window around each keyword.
-    // minV/maxV filter out stray small numbers (dates, codes, etc.).
-    const findNear=(kws,minV,maxV)=>{
-      for(const kw of kws){
-        const m=t.match(kw);
-        if(!m) continue;
-        const win=t.slice(Math.max(0,m.index-80),Math.min(t.length,m.index+m[0].length+80));
-        const nums=[...win.matchAll(/([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)/g)]
-          .map(x=>parseFloat(x[1].replace(/,/g,'')))
-          .filter(n=>!isNaN(n)&&n>=minV&&n<=maxV);
-        if(nums.length>0) return Math.max(...nums);
-      }
-      return null;
-    };
-    const gross=findNear([/ברוטו/,/שכר\s*ברוטו/,/bruto/i,/gross\s*(?:pay|salary)?/i],1000,99999);
-    const net=findNear([/נטו/,/לתשלום/,/neto/i,/net\s*(?:pay|salary)?/i],1000,99999);
-    const tax=findNear([/מס\s*הכנסה/,/מס\s*ה/,/income\s*tax/i],10,20000);
-    const bituach=findNear([/ביטוח\s*לאומי/,/national\s*ins/i],10,10000);
-    const pension=findNear([/פנסי[האה]/,/קרן\s*פנסיה/,/pension/i],10,10000);
-    const health=findNear([/ביטוח\s*בריאות/,/קופ[ת]?\s*חולים/,/health\s*(?:ins)?/i],10,5000);
-    const hours=findNear([/סה[״"כ]\s*שעות/,/שעות\s*(?:עבודה|רגילות|חודש)/,/total\s*hours/i],50,350);
-    const fields={};
-    if(gross!=null) fields.gross=gross;
-    if(net!=null) fields.net=net;
-    if(tax!=null) fields.tax=tax;
-    if(bituach!=null) fields.bituach=bituach;
-    if(pension!=null) fields.pension=pension;
-    if(health!=null) fields.health=health;
-    if(hours!=null) fields.hours=hours;
-    return Object.keys(fields).length>0?fields:null;
-  }
-  async function addPaySlips(files){
-    if(!files||!files.length)return;
-    setPaySlipUploading(true);
-    try{
-      let currentSlips=[...paySlips];
-      for(const file of Array.from(files)){
-        try{
-          const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
-          const existingIdx=currentSlips.findIndex(s=>s.name===file.name);
-          if(existingIdx!==-1) await window.storage.delete(PAYSLIP_PFX+currentSlips[existingIdx].id).catch(()=>{});
-          let analysis=null;
-          if(file.type==='application/pdf'){try{const text=await extractPdfText(base64);analysis=parsePaySlipText(text);}catch{}}
-          const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-          const meta={id,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),monthKey:new Date().toISOString().slice(0,7),analysis};
-          currentSlips=existingIdx!==-1?currentSlips.map((s,i)=>i===existingIdx?meta:s):[...currentSlips,meta];
-          await window.storage.set(PAYSLIP_PFX+id,base64).catch(()=>{});
-        }catch(e){console.error('PaySlip upload failed:',file.name,e);}
-      }
-      await window.storage.set(PAYSLIP_IDX,JSON.stringify(currentSlips)).catch(()=>{});
-      setPaySlips(currentSlips);
-      if(token) saveToDrive(token, shifts, dismissed, archiveIndex, weekData);
-    }finally{setPaySlipUploading(false);}
-  }
-  async function deletePaySlip(id){
-    await window.storage.delete(PAYSLIP_PFX+id).catch(()=>{});
-    const newSlips=paySlips.filter(s=>s.id!==id);
-    await window.storage.set(PAYSLIP_IDX,JSON.stringify(newSlips)).catch(()=>{});
-    setPaySlips(newSlips);
-    if(token) saveToDrive(token, shifts, dismissed, archiveIndex, weekData);
-  }
-  async function openPreviewSlip(id){
-    try{
-      const r=await window.storage.get(PAYSLIP_PFX+id).catch(()=>null);
-      if(!r){setSlipMsg({ok:false,text:"File not on this device — re-upload the PDF here to enable preview."});return;}
-      const sl=paySlips.find(s=>s.id===id);
-      const dataUrl=r.value;
-      // Create a blob URL so <object>/<iframe> can render it
-      const b64=dataUrl.split(',')[1];
-      const bin=atob(b64);const bytes=new Uint8Array(bin.length);
-      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-      const blob=new Blob([bytes],{type:sl?.type||'application/octet-stream'});
-      const blobUrl=URL.createObjectURL(blob);
-      setPreviewSlip({id,name:sl?.name||'payslip',type:sl?.type,blobUrl,analysis:sl?.analysis});
-    }catch{}
-  }
-  function closePreview(){
-    if(previewSlip?.blobUrl) URL.revokeObjectURL(previewSlip.blobUrl);
-    setPreviewSlip(null);
-  }
-  async function saveLocation(loc){
-    const trimmed=loc.trim();
-    setWorkLocation(trimmed);
-    setShowLocEdit(false);
-    await window.storage.set(LOC_KEY,trimmed).catch(()=>{});
-  }
-  async function reanalyzePaySlips(){
-    if(reanalyzing) return;
-    setReanalyzing(true);
-    try{
-      let updated=[...paySlips];
-      let changed=0;
-      for(let i=0;i<updated.length;i++){
-        const sl=updated[i];
-        if(sl.type!=='application/pdf') continue;
-        try{
-          const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);
-          if(!r) continue;
-          const text=await extractPdfText(r.value);
-          const analysis=parsePaySlipText(text);
-          if(analysis){updated[i]={...sl,analysis};changed++;}
-        }catch{}
-      }
-      if(changed>0){
-        await window.storage.set(PAYSLIP_IDX,JSON.stringify(updated)).catch(()=>{});
-        setPaySlips(updated);
-        if(token) saveToDrive(token,shifts,dismissed,archiveIndex,weekData);
-        setSlipMsg({ok:true,text:`✓ Re-analyzed ${changed} pay slip${changed>1?"s":""}`});
-      }else{
-        setSlipMsg({ok:false,text:"No PDF files found on this device to re-analyze"});
-      }
-    }finally{setReanalyzing(false);}
+    valid.forEach((sh,i)=>{
+      // Stagger opens so browser doesn't block them as popups
+      setTimeout(()=>window.open(buildGCalUrl(sh),"_blank"), i*400);
+    });
+    setWeekSyncMsg({ok:true,text:`Opened ${valid.length} shift${valid.length>1?"s":""} in Google Calendar — tap Save on each one`});
   }
 
   function buildGCalUrl(sh){
@@ -1424,13 +1032,42 @@ function App(){
     const pad=n=>String(n).padStart(2,"0");
     const fmt=dt=>`${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
     const hol=getHoliday(sh.date);
-    const stH3=st.h,etH3=parseT(sh.endTime)?.h??0,etM3=parseT(sh.endTime)?.m??0;
-    const isDbl=sh.endTime&&stH3<18&&(sh.crossesMidnight||etH3>18||(etH3===18&&etM3>10));
-    const lbl=isDbl?"Double Shift":sh.shiftType;
-    const title=encodeURIComponent(`[${isDbl?"Double":sh.shiftType}] ${lbl}${pay?` - ${pay.net} net`:""}`);
-    const details=encodeURIComponent([`Shift: ${lbl}`,`Hours: ${shiftHrsNum(sh)||"?"}h`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n"));
+    const title=encodeURIComponent(`[${sh.shiftType}] Shift${pay?` - ${pay.net} net`:""}`);
+    const details=encodeURIComponent([`Shift: ${sh.shiftType}`,`Hours: ${shiftHrsNum(sh)||"?"}h`,pay?`Pay: ${pay.net} net / ${pay.gross} gross`:"",sh.myTipCash?`Tips: ${sh.myTipCash}`:"Tips: not entered",hol?`Holiday: ${hol[0]} (${hol[1]}%)`:""].filter(Boolean).join("\n"));
     const dates=`${fmt(sD)}/${fmt(eD)}`;
     return `https://calendar.google.com/calendar/r/eventedit?text=${title}&dates=${dates}&details=${details}&sf=true`;
+  }
+
+  function exportICS(){
+    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Shift Tracker//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH"];
+    shifts.forEach(sh=>{
+      if(!sh.date||!sh.startTime)return;
+      const pay=calcPay(sh);
+      const[y,mo,d]=sh.date.split("-").map(Number);
+      const st=parseT(sh.startTime)||{h:18,m:0};
+      const sD=new Date(y,mo-1,d,st.h,st.m);
+      let eD;
+      if(sh.endTime){const et=parseT(sh.endTime);eD=new Date(y,mo-1,d,et.h,et.m);if(sh.crossesMidnight||eD<=sD)eD.setDate(eD.getDate()+1);}
+      else eD=new Date(sD.getTime()+6*3600000);
+      const fmt=dt=>[dt.getFullYear(),String(dt.getMonth()+1).padStart(2,"0"),String(dt.getDate()).padStart(2,"0"),"T",String(dt.getHours()).padStart(2,"0"),String(dt.getMinutes()).padStart(2,"0"),"00"].join("");
+      const st_=shiftStatus(sh);
+      const summary=`${sh.shiftType} Shift${pay?` — ₪${pay.net} net`:""}`;
+      const desc=["Shift Tracker Export",`Status: ${st_}`,pay?`Pay: ₪${pay.net} net / ₪${pay.gross} gross`:"",pay?.tips?`Tips: ₪${pay.tips}`:"",sh.myTipCash?`My tips: ₪${sh.myTipCash}`:"",getHoliday(sh.date)?`Holiday: ${getHoliday(sh.date)[0]}`:""].filter(Boolean).join("\n");
+      lines.push("BEGIN:VEVENT",`DTSTART:${fmt(sD)}`,`DTEND:${fmt(eD)}`,`SUMMARY:${summary}`,`DESCRIPTION:${desc.split("\n").join("\\n")}`,`UID:shift-${sh.id}@tracker`,`STATUS:${st_==="confirmed"?"CONFIRMED":"TENTATIVE"}`,"END:VEVENT");
+    });
+    // Add Israeli holidays
+    Object.entries(IL_HOLIDAYS).forEach(([date,[name,pct]])=>{
+      const[y,mo,d]=date.split("-").map(Number);
+      const nextDay=new Date(y,mo-1,d+1);
+      const nextStr=[nextDay.getFullYear(),String(nextDay.getMonth()+1).padStart(2,"0"),String(nextDay.getDate()).padStart(2,"0")].join("");
+      lines.push("BEGIN:VEVENT",`DTSTART;VALUE=DATE:${date.replace(/-/g,"")}`,`DTEND;VALUE=DATE:${nextStr}`,`SUMMARY:🎉 ${name} (${pct}% pay)`,`DESCRIPTION:Israeli holiday — pay rate ${pct}%`,`UID:holiday-${date}@tracker`,"END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const icsContent=lines.join("\r\n");
+    // Show ICS content in a copyable panel — download is blocked in sandboxed iframe
+    setIcsContent(icsContent);
+    setShowIcsPanel(true);
+    setGcMsg({ok:true,text:"✓ Calendar data ready — copy it below and save as shifts.ics"});
   }
 
     async function syncAll(){
@@ -1450,7 +1087,7 @@ function App(){
       const next=[...shifts];
       for(let i=0;i<next.length;i++){
         const sh=next[i];
-        const ev=toGCal(sh,workLocation);
+        const ev=toGCal(sh);
         if(!ev)continue;
         try{
           if(sh.gcalEventId){
@@ -1499,45 +1136,6 @@ function App(){
         }catch{}
       }
       await save(next);
-      // Sync all archive week shifts (so old "[Normal]" events get renamed to "[Double]"/holiday etc.)
-      const weekGcalUpdates={};
-      for(const [wKey,wData] of Object.entries(weekData)){
-        if(!wData?.myShifts?.length) continue;
-        const wUpdates={};
-        for(const sh of wData.myShifts){
-          const ev=toGCal(sh,workLocation);
-          if(!ev) continue;
-          try{
-            if(sh.gcalEventId){
-              try{
-                await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);
-                updated++;
-              }catch(e){
-                if(e.message?.includes("404")||e.message?.includes("410")||e.message?.includes("Gone")){
-                  const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-                  wUpdates[sh.id]=r.id;created++;
-                }else{errors++;lastErr=e.message;}
-              }
-            }else{
-              const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);
-              wUpdates[sh.id]=r.id;created++;
-            }
-          }catch(e){errors++;lastErr=e.message;}
-        }
-        if(Object.keys(wUpdates).length>0) weekGcalUpdates[wKey]=wUpdates;
-      }
-      if(Object.keys(weekGcalUpdates).length>0){
-        const updWD={...weekData};
-        for(const [wKey,wUpdates] of Object.entries(weekGcalUpdates)){
-          const wd=updWD[wKey];
-          if(wd){
-            updWD[wKey]={...wd,myShifts:(wd.myShifts||[]).map(s=>wUpdates[s.id]?{...s,gcalEventId:wUpdates[s.id]}:s)};
-            await window.storage.set(WEEK_PFX+wKey,JSON.stringify(updWD[wKey])).catch(()=>{});
-          }
-        }
-        setWeekData(updWD);
-        saveToDrive(token, next, dismissed, archiveIndex, updWD);
-      }
       const parts=[`✓ ${created} created, ${updated} updated`];
       if(errors)parts.push(`${errors} failed${lastErr?` (${lastErr.slice(0,50)})`:""}`);
       if(holidaysAdded)parts.push(`${holidaysAdded} holidays added`);
@@ -1550,7 +1148,7 @@ function App(){
   }
   async function syncOne(id){
     if(!token)return;const sh=shifts.find(s=>s.id===id);if(!sh)return;
-    try{const ev=toGCal(sh,workLocation);if(sh.gcalEventId){await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);}else{const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);await save(shifts.map(s=>s.id===id?{...s,gcalEventId:r.id}:s));}setGcMsg({ok:true,text:`✓ ${fmtDate(sh.date)} synced.`});}
+    try{const ev=toGCal(sh);if(sh.gcalEventId){await gcReq(token,"PUT",`/calendars/${calIdRef.current}/events/${sh.gcalEventId}`,ev);}else{const r=await gcReq(token,"POST",`/calendars/${calIdRef.current}/events`,ev);await save(shifts.map(s=>s.id===id?{...s,gcalEventId:r.id}:s));}setGcMsg({ok:true,text:`✓ ${fmtDate(sh.date)} synced.`});}
     catch(e){setGcMsg({ok:false,text:`Failed: ${e.message}`});}
   }
 
@@ -1559,8 +1157,6 @@ function App(){
   const confirmed=shifts.filter(s=>shiftStatus(s)==="confirmed");
   const totalHrs=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.hrs||0);},0);
   const totalNet=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.net||0);},0);
-  const totalWage=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.wage||0);},0);
-  const totalTipsConf=confirmed.reduce((s,sh)=>{const p=calcPay(sh);return s+(p?.tips||0);},0);
   const openCount=shifts.filter(s=>(!s.endTime&&!s.resolved)||( s.flagged&&!s.resolved)).length;
   const futureCount=shifts.filter(s=>shiftStatus(s)==="future").length;
   const syncedCount=shifts.filter(s=>s.gcalEventId).length;
@@ -1594,74 +1190,6 @@ function App(){
   const maxMonthHrs=Math.max(...monthlyHrs,1);
   const weeklyTrend=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;const myH=(w.myShifts||[]).reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0);const teamH=(w.rosterSummary||[]).reduce((s,r)=>s+r.totalHrs,0);return{key,weekStart:w.weekStart,myHrs:+myH.toFixed(1),teamAvgHrs:w.workerCount>0?+(teamH/w.workerCount).toFixed(1):0,shifts:(w.myShifts||[]).length};}).filter(Boolean);
   const maxWeekHrs=Math.max(...weeklyTrend.map(w=>Math.max(w.myHrs,w.teamAvgHrs)),1);
-  // Net pay stats for Statistics tab
-  const weeklyNet=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;const net=(w.myShifts||[]).reduce((s,sh)=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);return s+(p?.net||0);},0);return{key,weekStart:w.weekStart,net:+net.toFixed(0)};}).filter(Boolean);
-  const maxWeekNet=Math.max(...weeklyNet.map(w=>w.net),1);
-  const avgWeekNet=weeklyNet.length>0?weeklyNet.reduce((s,w)=>s+w.net,0)/weeklyNet.length:0;
-  const monthlyNetMap={};Object.values(weekData).forEach(w=>{(w.myShifts||[]).forEach(sh=>{if(!sh.date)return;const mk=sh.date.slice(0,7);const p=calcShiftPay(sh,sh.priorDayHrs||0);if(p?.net)monthlyNetMap[mk]=(monthlyNetMap[mk]||0)+p.net;});});
-  const monthlyNetArr=Object.entries(monthlyNetMap).sort(([a],[b])=>a.localeCompare(b));
-  const maxMonthNet=Math.max(...monthlyNetArr.map(([,v])=>v),1);
-  const avgMonthNet=monthlyNetArr.length>0?monthlyNetArr.reduce((s,[,v])=>s+v,0)/monthlyNetArr.length:0;
-
-  // ── Pay Slip Analytics ─────────────────────────────────────────
-  const slipsAnalyzed=paySlips.filter(s=>s.analysis!=null).sort((a,b)=>a.monthKey.localeCompare(b.monthKey));
-  const slipData=slipsAnalyzed.map(s=>({month:s.monthKey,...s.analysis}));
-  const maxSlipChart=Math.max(...slipData.map(s=>Math.max(s.gross||0,s.net||0)),1);
-  const slipWithNet=slipData.filter(s=>s.net!=null);
-  const slipWithGross=slipData.filter(s=>s.gross!=null);
-  const avgSlipNet=slipWithNet.length>0?slipWithNet.reduce((a,x)=>a+x.net,0)/slipWithNet.length:0;
-  const avgSlipGross=slipWithGross.length>0?slipWithGross.reduce((a,x)=>a+x.gross,0)/slipWithGross.length:0;
-  const bestSlipMonth=slipWithNet.length>0?slipWithNet.reduce((b,s)=>s.net>b.net?s:b):null;
-  const worstSlipMonth=slipWithNet.length>1?slipWithNet.reduce((w,s)=>s.net<w.net?s:w):null;
-  const taxSamples=slipData.filter(s=>s.tax!=null&&s.gross!=null&&s.gross>0);
-  const avgTaxRate=taxSamples.length>0?taxSamples.reduce((a,x)=>a+(x.tax/x.gross)*100,0)/taxSamples.length:0;
-  const netRateSamples=slipData.filter(s=>s.net!=null&&s.gross!=null&&s.gross>0);
-  const avgNetPct=netRateSamples.length>0?netRateSamples.reduce((a,x)=>a+(x.net/x.gross)*100,0)/netRateSamples.length:0;
-  const hrSamples=slipData.filter(s=>s.net!=null&&s.hours!=null&&s.hours>0);
-  const avgSlipHrRate=hrSamples.length>0?hrSamples.reduce((a,x)=>a+(x.net/x.hours),0)/hrSamples.length:0;
-  const totalTaxPaid=slipData.reduce((a,x)=>a+(x.tax||0),0);
-  const totalPension=slipData.reduce((a,x)=>a+(x.pension||0),0);
-  const totalBituach=slipData.reduce((a,x)=>a+(x.bituach||0),0);
-  const incomeGrowth=slipWithNet.length>=2?(()=>{const f=slipWithNet[0].net,l=slipWithNet[slipWithNet.length-1].net;return((l-f)/f)*100;})():null;
-  const avgTaxHours=(avgSlipHrRate>0&&avgTaxRate>0)?((avgSlipNet*(avgTaxRate/100))/avgSlipHrRate):null;
-  const slipInsights=[];
-  if(slipData.length>0){
-    if(avgNetPct>0) slipInsights.push({icon:"💰",col:C.green,text:`Take-home is ${avgNetPct.toFixed(0)}% of gross — you pay ${(100-avgNetPct).toFixed(0)}% in deductions`});
-    if(avgTaxRate>0) slipInsights.push({icon:"🏦",col:C.red,text:`Average income tax rate: ${avgTaxRate.toFixed(1)}%`});
-    if(bestSlipMonth) slipInsights.push({icon:"🏆",col:C.yellow,text:`Best paycheck: ₪${bestSlipMonth.net.toLocaleString()} (${bestSlipMonth.month})`});
-    if(worstSlipMonth) slipInsights.push({icon:"📉",col:C.muted,text:`Lowest paycheck: ₪${worstSlipMonth.net.toLocaleString()} (${worstSlipMonth.month})`});
-    if(avgSlipHrRate>0) slipInsights.push({icon:"⏰",col:C.acc,text:`Effective hourly rate: ₪${avgSlipHrRate.toFixed(1)}/h net (from pay slips)`});
-    if(avgTaxHours!=null) slipInsights.push({icon:"🕐",col:C.muted,text:`~${avgTaxHours.toFixed(0)} work-hours per month go straight to income tax`});
-    if(totalPension>0) slipInsights.push({icon:"🏦",col:C.purple,text:`Cumulative pension contributions: ₪${totalPension.toLocaleString()}`});
-    if(incomeGrowth!==null) slipInsights.push({icon:incomeGrowth>=0?"📈":"📉",col:incomeGrowth>=0?C.green:C.red,text:`Net income ${incomeGrowth>=0?"grew":"fell"} ${Math.abs(incomeGrowth).toFixed(1)}% from ${slipWithNet[0].month} to ${slipWithNet[slipWithNet.length-1].month}`});
-  }
-  // Overtime from archived shifts
-  const allOtHrs=allArchived.reduce((a,sh)=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);return a+(p?.breakdown?.otHrs1||0)+(p?.breakdown?.otHrs2||0);},0);
-  const allRegHrs=allArchived.reduce((a,sh)=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);return a+(p?.breakdown?.reg||0);},0);
-  const otPct=allRegHrs+allOtHrs>0?(allOtHrs/(allRegHrs+allOtHrs))*100:0;
-  // TOC sections list
-  const statSections=[
-    ...(allArchived.length>0?[
-      {id:"stat-earnings-avg",label:"Earnings Avg",icon:"💰"},
-      {id:"stat-monthly-net",label:"Net by Month",icon:"📊"},
-      {id:"stat-weekly-net",label:"Net by Week",icon:"📉"},
-      {id:"stat-dayfreq",label:"Day Frequency",icon:"📅"},
-      {id:"stat-morn-eve",label:"Morn/Eve",icon:"🌅"},
-      {id:"stat-shift-len",label:"Shift Lengths",icon:"⏱"},
-      ...(weeklyTrend.length>1?[{id:"stat-weekly-hrs",label:"Weekly Hrs",icon:"👥"}]:[]),
-      {id:"stat-monthly-hrs",label:"Monthly Hrs",icon:"🗓"},
-    ]:[]),
-  ];
-  const slipSections=[
-    ...(slipsAnalyzed.length>0?[
-      {id:"slip-income",label:"Income Trends",icon:"📈"},
-      {id:"slip-deductions",label:"Tax & Deductions",icon:"🏦"},
-      {id:"slip-insights",label:"Smart Insights",icon:"💡"},
-    ]:[]),
-    {id:"slip-list",label:"Pay Slips",icon:"🗂"},
-  ];
-  const scrollTo=id=>{const el=document.getElementById(id);if(el)el.scrollIntoView({behavior:"smooth",block:"start"});};
-
   const selData=selWeek?weekData[selWeek]:null;
 
   const inp=(ex={})=>({background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"7px 10px",fontSize:12,fontFamily:mono,outline:"none",width:"100%",boxSizing:"border-box",...ex});
@@ -1675,21 +1203,15 @@ function App(){
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes spin{to{transform:rotate(360deg)}}
         input:focus{border-color:${C.acc}!important;box-shadow:0 0 0 2px ${C.acc}20}button:active{opacity:.7}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:${C.dim};border-radius:2px}
-        @media(min-width:700px){
-          .hdr-logo{width:40px!important;height:40px!important;font-size:20px!important;}
-          .hdr-title{font-size:15px!important;}
-          .hdr-sub{font-size:10px!important;}
-          .nav-tab{padding:13px 22px!important;font-size:12px!important;}
-        }
       `}</style>
 
       {/* ── Top Header ── */}
       <div style={{padding:"12px 14px",borderBottom:`1px solid ${C.border}`,background:`linear-gradient(160deg,#0E1422,${C.bg})`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:9}}>
-          <div className="hdr-logo" style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
+          <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${C.acc},#7C3AED)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🍽</div>
           <div>
-            <div className="hdr-title" style={{fontSize:13,fontWeight:700}}>Shiftly</div>
-            <div className="hdr-sub" style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Statistics</div>
+            <div style={{fontSize:13,fontWeight:700}}>Shift Tracker</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:"1.5px",textTransform:"uppercase"}}>יותם · Pay + Archive + Patterns</div>
           </div>
         </div>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -1697,19 +1219,10 @@ function App(){
           {token?(
             <>
               {badg(C.green,"🔗 "+(email||"Connected"))}
-              {/* Drive sync status */}
-              {driveStatus==="saving"&&<span style={{fontSize:9,color:C.yellow,fontFamily:mono}}>💾 Saving…</span>}
-              {driveStatus==="saved"&&<span style={{fontSize:9,color:C.green,fontFamily:mono}}>☁ Synced</span>}
-              {driveStatus==="error"&&<span style={{fontSize:9,color:C.red,fontFamily:mono}}>☁ Error</span>}
-              {driveStatus==="loading"&&<span style={{fontSize:9,color:C.acc,fontFamily:mono}}>☁ Loading…</span>}
-              <button onClick={()=>loadFromDrive(token)} disabled={driveStatus==="loading"} title="Pull latest data from Google Drive" style={{background:`${C.acc}10`,border:`1px solid ${C.acc}30`,borderRadius:7,color:C.acc,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>↻ Pull</button>
-              <button onClick={saveNow} disabled={driveStatus==="saving"} title="Save all data to Google Drive now" style={{background:`${C.green}10`,border:`1px solid ${C.green}30`,borderRadius:7,color:C.green,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono}}>💾 Save</button>
-              <button onClick={()=>{setLocDraft(workLocation);setShowLocEdit(v=>!v);}}
-                style={{background:workLocation?`${C.green}18`:`${C.dim}`,border:`1px solid ${workLocation?C.green:C.border}`,borderRadius:7,color:workLocation?C.green:C.muted,padding:"5px 8px",fontSize:10,cursor:"pointer",fontFamily:mono,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
-                title={workLocation||"Set your work location for Google Calendar events"}>
-                📍 {workLocation?(workLocation.length>16?workLocation.slice(0,16)+"…":workLocation):"Set location"}
+              {calendars.length>0&&<select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:130}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"💼 "+cal.name}</option>))}</select>}
+              <button onClick={exportICS} style={{background:`linear-gradient(135deg,${C.acc},#7C3AED)`,border:"none",borderRadius:8,color:"#fff",padding:"8px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
+                📅 Export Calendar (.ics)
               </button>
-              {calendars.length>0&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.muted}}>Cal:</span><select value={calendarId} onChange={e=>changeCalendar(e.target.value)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"6px 8px",fontSize:10,fontFamily:mono,maxWidth:140}}>{calendars.map(cal=>(<option key={cal.id} value={cal.id}>{cal.primary?"📅 Primary":"📅 "+cal.name}</option>))}</select></div>}
               <button onClick={testToken} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:8,color:C.acc,padding:"8px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔍 Test</button>
               <button onClick={signOut} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>Sign out</button>
               <button onClick={()=>window.open("https://myaccount.google.com/permissions","_blank")} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}} title="Revoke Google Calendar access">🔒 Revoke</button>
@@ -1717,7 +1230,7 @@ function App(){
             </>
           ):(
             <>
-              <button onClick={signIn} title="Sign in to sync data across all your devices via Google Drive" style={{background:"linear-gradient(135deg,#EA4335,#FBBC05)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔗 Sign in to sync</button>
+              <button onClick={signIn} style={{background:"linear-gradient(135deg,#EA4335,#FBBC05)",border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🔗 Google</button>
               <button onClick={()=>setShowPaste(v=>!v)} style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"7px 10px",fontSize:10,cursor:"pointer",fontFamily:mono}}>📋 Paste URL</button>
 
               <button onClick={()=>setResetStep(1)} style={{background:`${C.red}20`,border:`1px solid ${C.red}50`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono}}>🗑 Reset</button>
@@ -1726,48 +1239,16 @@ function App(){
         </div>
       </div>
 
-      {/* ── Drive error banner ── */}
-      {driveStatus==="error"&&driveError&&(()=>{
-        const isDisabled=driveError.toLowerCase().includes("has not been used")||driveError.toLowerCase().includes("disabled");
-        const urlMatch=driveError.match(/https:\/\/console[^\s]+/);
-        const enableUrl=urlMatch?urlMatch[0]:`https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=657282377889`;
-        return(
-          <div style={{background:isDisabled?`${C.yellow}15`:`${C.red}12`,borderBottom:`1px solid ${isDisabled?C.yellow:C.red}30`,padding:"8px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,color:isDisabled?C.yellow:C.red,flex:1}}>
-              {isDisabled?"⚠ Google Drive API is not enabled for this project — sync won't work until enabled.":("☁ Drive error: "+driveError)}
-            </span>
-            {isDisabled&&<a href={enableUrl} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:700,color:C.yellow,fontFamily:mono,background:`${C.yellow}20`,border:`1px solid ${C.yellow}40`,borderRadius:6,padding:"4px 10px",textDecoration:"none",whiteSpace:"nowrap"}}>Enable Drive API →</a>}
-            <button onClick={()=>{setDriveError(null);setDriveStatus("idle");}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>✕</button>
-          </div>
-        );
-      })()}
-
-      {/* ── Location edit panel ── */}
-      {showLocEdit&&(
-        <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",animation:"slideIn .2s ease"}}>
-          <span style={{fontSize:10,color:C.muted,fontFamily:mono,flexShrink:0}}>📍 Work location for calendar events:</span>
-          <input style={{...inp({fontSize:10,padding:"6px 10px"}),flex:1,minWidth:180,maxWidth:340}}
-            placeholder="e.g. 123 Main St, Tel Aviv"
-            value={locDraft}
-            onChange={e=>setLocDraft(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter")saveLocation(locDraft);if(e.key==="Escape")setShowLocEdit(false);}}
-            autoFocus/>
-          <button onClick={()=>saveLocation(locDraft)} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"6px 12px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:mono,flexShrink:0}}>Save</button>
-          {workLocation&&<button onClick={()=>saveLocation("")} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:7,color:C.red,padding:"6px 10px",fontSize:10,cursor:"pointer",fontFamily:mono,flexShrink:0}}>Clear</button>}
-          <button onClick={()=>setShowLocEdit(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,padding:"6px 10px",fontSize:10,cursor:"pointer",fontFamily:mono,flexShrink:0}}>✕</button>
-        </div>
-      )}
-
       {/* ── Main Nav Tabs ── */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
-        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"],["payslips","💳 Pay Slips"]].map(([k,l])=>(
-          <button key={k} className="nav-tab" onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
+        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["patterns","📊 Patterns"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
             {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
           </button>
         ))}
       </div>
 
-      <div style={{maxWidth:980,margin:"0 auto",padding:"14px 13px"}}>
+      <div style={{maxWidth:860,margin:"0 auto",padding:"14px 13px"}}>
 
         {/* ── Global Paste URL panel — visible from any tab ── */}
         {showPaste&&!token&&(
@@ -1828,8 +1309,26 @@ function App(){
             {/* Messages */}
             {gcMsg&&<div style={{background:gcMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${gcMsg.ok?C.green:C.red}30`,borderRadius:8,padding:"9px 13px",fontSize:11,color:gcMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12}}><span style={{flex:1}}>{gcMsg.text}</span><button onClick={()=>setGcMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
 
-            {/* Google Calendar info */}
-            <div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}30`,borderLeft:`3px solid ${C.acc}`,borderRadius:9,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>📅 Google Calendar</div><div style={{fontSize:10,color:C.muted}}>{token?<>Use <strong style={{color:C.text}}>Sync week</strong> in the Archive tab to push shifts directly to your selected calendar.</>:"Sign in with Google above to sync shifts directly to your calendar."}</div></div>
+            {/* Not connected */}
+            <div style={{background:`${C.acc}08`,border:`1px solid ${C.acc}30`,borderLeft:`3px solid ${C.acc}`,borderRadius:9,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>📅 Google Calendar</div><div style={{fontSize:10,color:C.muted}}>Tap <strong style={{color:C.text}}>Export Calendar (.ics)</strong> → copy the text → save as <strong style={{color:C.text}}>shifts.ics</strong> → open in Google Calendar.</div></div>
+
+            {/* ICS content panel */}
+            {showIcsPanel&&(
+              <div style={{background:C.surface,border:`1px solid ${C.green}40`,borderRadius:9,padding:"12px 13px",marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <span style={{fontSize:10,fontWeight:700,color:C.green}}>📅 Calendar data — copy & save as shifts.ics</span>
+                  <button onClick={()=>setShowIcsPanel(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13}}>✕</button>
+                </div>
+                <textarea readOnly value={icsContent} style={{width:"100%",height:120,background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:9,fontFamily:mono,padding:"8px",resize:"none",boxSizing:"border-box"}}/>
+                <button onClick={()=>{navigator.clipboard?.writeText(icsContent).catch(()=>{});setIcsCopied(true);setTimeout(()=>setIcsCopied(false),3000);}} style={{width:"100%",marginTop:7,background:icsCopied?`${C.green}30`:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"9px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>
+                  {icsCopied?"✓ Copied! Paste into a .ics file":"📋 Copy calendar data"}
+                </button>
+                <div style={{fontSize:9,color:C.muted,marginTop:6,lineHeight:1.5}}>
+                  On Android: paste into any text editor → save as shifts.ics → open with Google Calendar.<br/>
+                  On iOS: paste into Files app as shifts.ics → tap to import.
+                </div>
+              </div>
+            )}
 
             {/* Notifications — collapsed summary with expand */}
             {notifs.length>0&&(()=>{
@@ -1871,7 +1370,7 @@ function App(){
             {/* Summary */}
             {shifts.length>0&&!editingShift&&(
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:13}}>
-                {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[`₪${Math.round(totalWage).toLocaleString()}`,"Paycheck",C.green],[`₪${Math.round(totalTipsConf).toLocaleString()}`,"Tips",C.purple]].map(([v,l,c])=>(
+                {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[openCount>0?`${openCount} open`:"Clear","Unresolved",openCount>0?C.red:C.green],[`₪${Math.round(totalNet).toLocaleString()}`,"Net Est.",C.green]].map(([v,l,c])=>(
                   <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 7px",textAlign:"center"}}><div style={{fontSize:17,fontWeight:700,color:c,marginBottom:1}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
                 ))}
               </div>
@@ -1921,13 +1420,11 @@ function App(){
                   const stRaw=shiftStatus(sh);
                   const st=(stRaw==="confirmed"&&partnerMissingTips)?"pending":stRaw;
                   const mt=sMeta(st),pay=calcPay(sh),synced=!!sh.gcalEventId;
-                  const hasTips=isDouble
-                    ?(sh.myTipCash!==undefined&&sh.myTipCash!==null&&sh.myTipCash!==""&&parseFloat(sh.myTipCash)>0)
-                    :(st==="confirmed"&&sh.myTipCash&&parseFloat(sh.myTipCash)>0);
+                  const hasTips=st==="confirmed"&&sh.myTipCash&&parseFloat(sh.myTipCash)>0;
                   // Total day stats for double shift header
                   const totalHrs=dayShifts.reduce((s,s2)=>s+(shiftHrsNum(s2)||0),0);
                   const totalNet=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.net||0);},0);
-                  const totalWageDay=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.wage||0);},0);
+                  const totalGross=dayShifts.reduce((s,s2)=>{const p=calcPay(s2);return s+(p?.gross||0);},0);
                   const totalTips=dayShifts.reduce((s,s2)=>s+(parseFloat(s2.myTipCash)||0),0);
                   const hasNight=dayShifts.some(s2=>isNightShift(s2.startTime,s2.endTime,s2.crossesMidnight));
                   const shiftLabel=isDouble?(sh.doubleShiftIdx===0?"☀ Morning":"🌙 Evening"):"";
@@ -1940,13 +1437,10 @@ function App(){
                         <span style={{fontSize:9,color:C.muted}}>{totalHrs.toFixed(1)}h total</span>
                         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
                           <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:6,padding:"3px 10px",textAlign:"center"}}>
-                            <div style={{fontSize:14,fontWeight:700,color:C.green}}>₪{totalWageDay.toFixed(0)}</div>
-                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Paycheck</div>
+                            <div style={{fontSize:14,fontWeight:700,color:C.green}}>₪{totalNet.toFixed(0)}</div>
+                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Day Net</div>
                           </div>
-                          {totalTips>0&&<div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:6,padding:"3px 10px",textAlign:"center"}}>
-                            <div style={{fontSize:14,fontWeight:700,color:C.purple}}>₪{totalTips.toFixed(0)}</div>
-                            <div style={{fontSize:7,color:C.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Tips</div>
-                          </div>}
+                          <span style={{fontSize:10,color:C.muted}}>₪{totalGross.toFixed(0)} gross</span>
                           {totalTips>0&&<span style={{fontSize:10,color:C.purple}}>₪{totalTips} tips</span>}
                         </div>
                       </div>
@@ -1965,6 +1459,7 @@ function App(){
                         {!isDouble&&<span style={{fontSize:12,fontWeight:700,fontFamily:sans}}>{fmtDate(sh.date)}</span>}
                         {synced&&badg(C.green,"📅")}
                         <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+                          <button onClick={()=>window.open(buildGCalUrl(sh),"_blank")} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>+ Cal</button>
                           {!sh.resolved&&<button onClick={()=>upd(sh.id,{flagged:!sh.flagged,resolved:false})} style={{background:sh.flagged?`${C.red}25`:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>{sh.flagged?"⚑ Flagged":"⚐ Flag"}</button>}
                           {sh.flagged&&<button onClick={()=>upd(sh.id,{resolved:true,flagged:false})} style={{background:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:6,color:C.green,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✓ Resolve</button>}
                           {deleteConfirmId===sh.id?(
@@ -1993,17 +1488,12 @@ function App(){
                             const bd=pay.breakdown;
                             return(<>
                               <div style={{background:`${boxColor}15`,border:`1px solid ${boxColor}30`,borderRadius:8,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:80}}>
-                                <span style={{fontSize:16,fontWeight:700,color:boxColor,letterSpacing:"-0.5px"}}>₪{pay.wage}</span>
-                                <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isConf?"Paycheck":"Est. Pay"}</span>
+                                <span style={{fontSize:16,fontWeight:700,color:boxColor,letterSpacing:"-0.5px"}}>₪{pay.net}</span>
+                                <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{isConf?"Net":"Est. Net"}</span>
                               </div>
-                              {pay.tips>0&&(
-                                <div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:8,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center",minWidth:70}}>
-                                  <span style={{fontSize:16,fontWeight:700,color:C.purple,letterSpacing:"-0.5px"}}>₪{pay.tips}</span>
-                                  <span style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips</span>
-                                </div>
-                              )}
                               <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                <span style={{fontSize:10,color:C.muted}}>{pay.hrs}h</span>
+                                <span style={{fontSize:10,color:C.muted}}>₪{pay.gross} gross · {pay.hrs}h</span>
+                                {pay.tips>0&&<span style={{fontSize:10,color:C.purple}}>₪{pay.tips} tips</span>}
                                 {bd&&!bd.isPremium&&(bd.otHrs1>0||bd.otHrs2>0)&&(
                                   <span style={{fontSize:9,color:C.acc}}>
                                     {bd.reg.toFixed(1)}h×₪{BASE_RATE}
@@ -2012,7 +1502,7 @@ function App(){
                                     {bd.isNight?" 🌙":""}
                                   </span>
                                 )}
-                                {sh.isDoubleShift&&sh.priorDayHrs>0&&<span style={{fontSize:9,color:C.purple}}>+{sh.priorDayHrs}h carried</span>}
+                                {sh.isDoubleShift&&sh.priorDayHrs>0&&<span style={{fontSize:9,color:C.purple}}>+{sh.priorDayHrs}h carried from earlier shift</span>}
                               </div>
                             </>);
                           })()}
@@ -2024,91 +1514,63 @@ function App(){
                           <label style={{fontSize:9,color:!sh.endTime?C.red:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{!sh.endTime?"⚠ ":""}End Time</label>
                           <input style={inp(!sh.endTime?{background:"#EF444408",borderColor:"#EF444440"}:{})} placeholder="HH:MM" defaultValue={sh.endTime??""} onBlur={e=>upd(sh.id,{endTime:e.target.value.trim()})}/>
                         </div>
-                        {(()=>{
-                          const segHrs=isDouble?(shiftHrsNum(sh)||0):(pay?.hrs||0);
-                          const segPay=isDouble?calcShiftPay(sh,sh.priorDayHrs||0):pay;
-                          const tipsCash=parseFloat(sh.myTipCash||"");
-                          const baseRate=shiftBaseRate(sh);
-                          const basePerHr=segPay&&segHrs>0?((segPay.gross-(isNaN(tipsCash)?0:tipsCash))/segHrs):null;
-                          const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
-                          const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
-                          const displayRate=totalPerHr!=null?totalPerHr.toFixed(2):baseRate.toFixed(2);
-                          const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
-                          const tipsDefaultVal=!isNaN(tipsCash)&&sh.myTipCash!==""?tipsCash.toFixed(2):"";
-                          const effectiveBase=basePerHr||baseRate;
-                          // For double shifts DoubleTipField renders the editable inputs below
-                          if(isDouble) return(
-                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                              <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>₪{displayRate}/h</div>
-                              {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
-                            </div>
-                          );
-                          // For split-pool shifts the split pool section renders the editable inputs below
-                          const stH2=parseT(sh.startTime)?.h??0;
-                          const etH2=parseT(sh.endTime)?.h??0;
-                          const etM2=parseT(sh.endTime)?.m??0;
-                          const isSplit=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>10));
-                          if(isSplit) return(
-                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                              <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>₪{displayRate}/h</div>
-                              {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
-                            </div>
-                          );
-                          return(<>
-                            {/* Col 2: read-only ₪/h display */}
-                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                              <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>
-                                ₪{displayRate}/h
+                        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                          <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tip ₪/h</label>
+                          {(()=>{
+                            const segHrs=isDouble?(shiftHrsNum(sh)||0):(pay?.hrs||0);
+                            const segPay=isDouble?calcShiftPay(sh,sh.priorDayHrs||0):pay;
+                            const tipsCash=parseFloat(sh.myTipCash||"");
+                            const basePerHr=segPay&&segHrs>0?((segPay.gross-(isNaN(tipsCash)?0:tipsCash))/segHrs):null;
+                            const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
+                            const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
+                            const displayVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"—";
+                            // Editable hourly box — shows effective ₪/h, user can type total to back-calc tips
+                            const effectiveDisplay=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"";
+                            const handleHourlyBlur=e=>{
+                              const raw=parseFloat(e.target.value.replace("₪/h","").trim());
+                              if(isNaN(raw)||segHrs<=0){e.target.value=effectiveDisplay;return;}
+                              const effectiveBase=basePerHr||shiftBaseRate(sh);
+                              const tipRate=raw>effectiveBase?raw-effectiveBase:raw;
+                              const tipTotal=+(tipRate*segHrs).toFixed(2);
+                              upd(sh.id,{myTipCash:tipTotal+""});
+                            };
+                            return(
+                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                <input
+                                  key={`hrly_${sh.id}_${sh.myTipCash}`}
+                                  style={inp({color:totalPerHr!=null?C.text:C.muted})}
+                                  placeholder={basePerHr!=null?basePerHr.toFixed(2)+"₪/h":"₪/h"}
+                                  defaultValue={effectiveDisplay}
+                                  onFocus={e=>{
+                                    // Strip ₪/h suffix on focus for easier editing
+                                    const v=parseFloat(e.target.value);
+                                    if(!isNaN(v)) e.target.value=v.toFixed(2);
+                                    e.target.select();
+                                  }}
+                                  onBlur={e=>{
+                                    handleHourlyBlur(e);
+                                    // Restore display format after blur
+                                    const raw=parseFloat(e.target.value);
+                                    if(!isNaN(raw)) e.target.value=raw.toFixed(2)+"₪/h";
+                                  }}/>
+                                {basePerHr!=null&&tipsPerHr!=null&&(
+                                  <span style={{fontSize:8,color:C.muted}}>
+                                    ₪{basePerHr.toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips
+                                  </span>
+                                )}
+                                {basePerHr!=null&&tipsPerHr==null&&(
+                                  <span style={{fontSize:8,color:C.muted}}>type total ₪/h to set tips</span>
+                                )}
                               </div>
-                              {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                              {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
-                            </div>
-                            {/* Row 2 col 1: Total ₪/h received */}
-                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
-                              <input
-                                key={`hrly_${sh.id}_${sh.myTipCash}`}
-                                style={inp({color:totalPerHr!=null?C.text:C.muted})}
-                                placeholder={`₪${baseRate}/h`}
-                                defaultValue={hrlyDefaultVal}
-                                onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                onBlur={e=>{
-                                  const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                  if(isNaN(raw)||segHrs<=0){e.target.value=hrlyDefaultVal;return;}
-                                  const tipRate=raw>effectiveBase?raw-effectiveBase:0;
-                                  upd(sh.id,{myTipCash:+(tipRate*segHrs).toFixed(2)+""});
-                                }}
-                              />
-                            </div>
-                            {/* Row 2 col 2: Total Tips ₪ */}
-                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
-                              <input
-                                key={`tips_${sh.id}_${sh.myTipCash}`}
-                                style={inp({color:tipsPerHr!=null?C.text:C.muted})}
-                                placeholder="0"
-                                defaultValue={tipsDefaultVal}
-                                onFocus={e=>{e.target.select();}}
-                                onBlur={e=>{
-                                  const raw=parseFloat(e.target.value.trim());
-                                  if(isNaN(raw)){return;}
-                                  upd(sh.id,{myTipCash:+(raw).toFixed(2)+""});
-                                }}
-                              />
-                            </div>
-                          </>);
-                        })()}
+                            );
+                          })()}
+                        </div>
                         {(()=>{
                           // Detect split-pool shift: starts before 18:00 AND ends after 18:00
                           const stH=parseT(sh.startTime)?.h??0;
                           const etH=parseT(sh.endTime)?.h??0;
                           const etM=parseT(sh.endTime)?.m??0;
-                          const splitPool=sh.endTime&&stH<18&&(sh.crossesMidnight||etH>18||(etH===18&&etM>10));
+                          const splitPool=sh.endTime&&stH<18&&(sh.crossesMidnight||etH>18||(etH===18&&etM>0));
                           if(splitPool){
                             const morningMins=Math.max(0,(18*60)-(stH*60+(parseT(sh.startTime)?.m??0)));
                             const totalMins=(()=>{let d=toMin(parseT(sh.endTime))-toMin(parseT(sh.startTime));if(sh.crossesMidnight||d<0)d+=1440;return d;})();
@@ -2119,66 +1581,55 @@ function App(){
                             const mTips=parseFloat(sh.morningTips||"");
                             const eTips=parseFloat(sh.eveningTips||"");
                             const totalTips=(!isNaN(mTips)?mTips:0)+(!isNaN(eTips)?eTips:0);
-                            const mBr=shiftBaseRate(sh); // morning: 66 on Shabbat, 44 normal
-                            const eBr=sh.shiftType==="Shabbat"?BASE_RATE:mBr; // evening always normal after 18:00
-                            const mTipsPerHr=(!isNaN(mTips)&&sh.morningTips!=="")&&mH>0?(mTips/mH):null;
-                            const eTipsPerHr=(!isNaN(eTips)&&sh.eveningTips!=="")&&eH>0?(eTips/eH):null;
-                            const mHrlyDef=mTipsPerHr!=null?(mBr+mTipsPerHr).toFixed(2):"";
-                            const eHrlyDef=eTipsPerHr!=null?(eBr+eTipsPerHr).toFixed(2):"";
-                            const mTipsDef=!isNaN(mTips)&&sh.morningTips!==""?mTips.toFixed(2):"";
-                            const eTipsDef=!isNaN(eTips)&&sh.eveningTips!==""?eTips.toFixed(2):"";
                             return(<>
                               <div style={{gridColumn:"1 / -1",background:`${C.purple}08`,border:`1px solid ${C.purple}20`,borderRadius:7,padding:"8px 10px",marginTop:2}}>
-                                <div style={{fontSize:9,color:C.purple,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>⚡ Split Tip Pools ({mH.toFixed(1)}h morning + {eH.toFixed(1)}h evening)</div>
+                                <div style={{fontSize:9,color:C.purple,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:7}}>⚡ Split Tip Pools ({mH.toFixed(1)}h morning + {eH.toFixed(1)}h evening)</div>
                                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                                  {/* Row 1: Tips ₪ */}
+                                  {/* Morning */}
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                     <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tips ₪</label>
-                                    <input key={`sp_mt_${sh.id}_${sh.morningTips}`} style={inp()} placeholder="0" defaultValue={mTipsDef}
-                                      onFocus={e=>{e.target.select();}}
-                                      onBlur={e=>{
-                                        const raw=parseFloat(e.target.value.trim());
-                                        if(isNaN(raw)){return;}
-                                        const v=+(raw).toFixed(2);
-                                        upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
-                                      }}/>
-                                    {mTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{mBr}/h base + ₪{mTipsPerHr.toFixed(2)}/h tips</span>}
+                                    <input key={`mt_m_${sh.id}`} style={inp()} placeholder="0" defaultValue={sh.morningTips??""}
+                                      onBlur={e=>{const v=e.target.value.trim();const t=parseFloat(v);const tot=(!isNaN(t)?t:0)+(!isNaN(parseFloat(sh.eveningTips||""))?parseFloat(sh.eveningTips):0);upd(sh.id,{morningTips:isNaN(t)?"":v,myTipCash:tot>0?tot+"":sh.myTipCash});}}/>
                                   </div>
+                                  {/* Evening */}
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                     <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tips ₪</label>
-                                    <input key={`sp_et_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder="0" defaultValue={eTipsDef}
-                                      onFocus={e=>{e.target.select();}}
-                                      onBlur={e=>{
-                                        const raw=parseFloat(e.target.value.trim());
-                                        if(isNaN(raw)){return;}
-                                        const v=+(raw).toFixed(2);
-                                        upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
-                                      }}/>
-                                    {eTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{eBr}/h base + ₪{eTipsPerHr.toFixed(2)}/h tips</span>}
+                                    <input key={`mt_e_${sh.id}`} style={inp()} placeholder="0" defaultValue={sh.eveningTips??""}
+                                      onBlur={e=>{const v=e.target.value.trim();const t=parseFloat(v);const tot=(!isNaN(t)?t:0)+(!isNaN(parseFloat(sh.morningTips||""))?parseFloat(sh.morningTips):0);upd(sh.id,{eveningTips:isNaN(t)?"":v,myTipCash:tot>0?tot+"":sh.myTipCash});}}/>
                                   </div>
-                                  {/* Row 2: ₪/H */}
+                                  {/* Morning hourly */}
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tip ₪/H</label>
-                                    <input key={`sp_mh_${sh.id}_${sh.morningTips}`} style={inp()} placeholder="tip ₪/h or total ₪/h" defaultValue={mHrlyDef}
-                                      onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
+                                    <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning ₪/h total</label>
+                                    <input key={`mh_m_${sh.id}_${sh.morningTips}`} style={inp()} placeholder="total ₪/h (e.g. 60)"
+                                      defaultValue={sh.morningTips&&mH>0?(shiftBaseRate(sh)+(parseFloat(sh.morningTips)/mH)).toFixed(2):""}
                                       onBlur={e=>{
-                                        const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                        if(isNaN(raw)||mH<=0){e.target.value=mHrlyDef;return;}
-                                        const tipRate=raw>mBr?raw-mBr:raw;
-                                        const v=+(tipRate*mH).toFixed(2);
-                                        upd(sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
+                                        const raw=e.target.value.trim();
+                                        const r=parseFloat(raw);
+                                        if(!isNaN(r)&&mH>0){
+                                          // If user enters total hourly (e.g. 60), subtract base (44) to get tip rate
+                                          // If user enters tip-only rate (e.g. 16), use directly
+                                          // Heuristic: if value > shift base rate, treat as total and subtract
+                                          const br=shiftBaseRate(sh);const tipRate=r>br?r-br:r;
+                                          const v=+(tipRate*mH).toFixed(2);
+                                          const tot=v+(!isNaN(parseFloat(sh.eveningTips||""))?parseFloat(sh.eveningTips):0);
+                                          upd(sh.id,{morningTips:v+"",myTipCash:tot>0?tot+"":sh.myTipCash});
+                                        }
                                       }}/>
                                   </div>
+                                  {/* Evening hourly */}
                                   <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tip ₪/H</label>
-                                    <input key={`sp_eh_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder="tip ₪/h or total ₪/h" defaultValue={eHrlyDef}
-                                      onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
+                                    <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening ₪/h total</label>
+                                    <input key={`mh_e_${sh.id}_${sh.eveningTips}`} style={inp()} placeholder="total ₪/h (e.g. 60)"
+                                      defaultValue={sh.eveningTips&&eH>0?(shiftBaseRate(sh)+(parseFloat(sh.eveningTips)/eH)).toFixed(2):""}
                                       onBlur={e=>{
-                                        const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                        if(isNaN(raw)||eH<=0){e.target.value=eHrlyDef;return;}
-                                        const tipRate=raw>eBr?raw-eBr:raw;
-                                        const v=+(tipRate*eH).toFixed(2);
-                                        upd(sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
+                                        const raw=e.target.value.trim();
+                                        const r=parseFloat(raw);
+                                        if(!isNaN(r)&&eH>0){
+                                          const br2=shiftBaseRate(sh);const tipRate=r>br2?r-br2:r;
+                                          const v=+(tipRate*eH).toFixed(2);
+                                          const tot=(!isNaN(parseFloat(sh.morningTips||""))?parseFloat(sh.morningTips):0)+v;
+                                          upd(sh.id,{eveningTips:v+"",myTipCash:tot>0?tot+"":sh.myTipCash});
+                                        }
                                       }}/>
                                   </div>
                                 </div>
@@ -2202,7 +1653,7 @@ function App(){
                                 partnerName={sh.doubleShiftIdx===0?"Evening":"Morning"}
                                 updFn={upd}
                                 inpFn={inp}
-                                colors={{yellow:C.yellow,acc:C.acc,muted:C.muted,purple:C.purple,dim:C.dim,border:C.border,text:C.text}}
+                                colors={{yellow:C.yellow,acc:C.acc,muted:C.muted,purple:C.purple}}
                                 fontMono={mono}
                               />
                             );
@@ -2354,36 +1805,28 @@ function App(){
                     </div>
                   </div>
                   {(()=>{
-                    const weekWage=(selData.myShifts||[]).reduce((sum,sh)=>{const _p=calcShiftPay(sh,sh.priorDayHrs||0);return sum+(_p?.wage||0);},0);
-                    const weekTips=(selData.myShifts||[]).reduce((sum,sh)=>sum+(parseFloat(sh.myTipCash)||0),0);
-                    const weekNet=weekWage+weekTips;
+                    const weekNet=(selData.myShifts||[]).reduce((sum,sh)=>{
+                      const s=parseT(sh.startTime),e=parseT(sh.endTime);
+                      const hrs=shiftHrs(s,e,sh.crossesMidnight);if(!hrs)return sum;
+                      const _p=calcShiftPay(sh,sh.priorDayHrs||0);
+                      const base=_p?_p.gross-(parseFloat(sh.myTipCash)||0):0;
+                      const tips=parseFloat(sh.myTipCash)||0;
+                      return sum+(base+tips-PENSION*hrs);
+                    },0);
                     return(
                       <div style={{display:"flex",gap:10,marginTop:9,paddingTop:9,borderTop:`1px solid ${C.border}`,flexWrap:"wrap",alignItems:"center"}}>
                         <div style={{background:`${C.green}15`,border:`1px solid ${C.green}30`,borderRadius:8,padding:"8px 14px",textAlign:"center",minWidth:90}}>
-                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(weekWage).toLocaleString()}</div>
-                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Paycheck</div>
+                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(weekNet).toLocaleString()}</div>
+                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Week Net</div>
                         </div>
-                        {weekTips>0&&<div style={{background:`${C.purple}15`,border:`1px solid ${C.purple}30`,borderRadius:8,padding:"8px 14px",textAlign:"center",minWidth:90}}>
-                          <div style={{fontSize:18,fontWeight:700,color:C.purple,letterSpacing:"-0.5px"}}>₪{Math.round(weekTips).toLocaleString()}</div>
-                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Tips</div>
-                        </div>}
                         {token&&(
                           <div style={{display:"flex",flexDirection:"column",gap:4,justifyContent:"center"}}>
-                            <div style={{display:"flex",gap:4}}>
-                              <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||weekDeleting||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
-                                {weekSyncing?"Syncing...":"↑ Sync Week"}
-                              </button>
-                              <button onClick={()=>deleteWeekFromGCal(selData?.myShifts||[])} disabled={weekDeleting||weekSyncing||(selData?.myShifts||[]).filter(s=>s.gcalEventId).length===0} style={{background:weekDeleting?C.dim:`${C.red}18`,border:`1px solid ${C.red}40`,borderRadius:7,color:C.red,padding:"7px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4}}>
-                                {weekDeleting?"Deleting...":"🗑 Delete from GCal"}
-                              </button>
-                            </div>
+                            <button onClick={()=>syncWeek(selData?.myShifts||[])} disabled={weekSyncing||(selData?.myShifts||[]).length===0} style={{background:weekSyncing?C.dim:`${C.green}18`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"7px 12px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:5}}>
+                              {weekSyncing?"Syncing...":"Sync week to Google Cal"}
+                            </button>
                             {weekSyncMsg&&<div style={{fontSize:9,color:weekSyncMsg.ok?C.green:C.yellow,marginTop:2}}>{weekSyncMsg.text}</div>}
-                            {weekDeleteMsg&&<div style={{fontSize:9,color:weekDeleteMsg.ok?C.green:C.yellow,marginTop:2}}>{weekDeleteMsg.text}</div>}
                           </div>
                         )}
-                        <button onClick={() => setArchiveEditMode(v => !v)} style={{background: archiveEditMode ? `${C.green}25` : `${C.acc}18`, border: `1px solid ${archiveEditMode ? C.green : C.acc}50`, borderRadius: 7, color: archiveEditMode ? C.green : C.acc, padding: "7px 12px", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: mono}}>
-                          {archiveEditMode ? "✓ Done Editing" : "✏ Edit Week"}
-                        </button>
                         {[[selData.myShifts?.length||0,"Shifts"],[selData.myShifts?.reduce((s,sh)=>s+(shiftHrsNum(sh)||0),0).toFixed(1)+"h","Hours"],[selData.workerCount||0,"Workers"],[selData.rosterSummary?.length||0,"Staff"]].map(([v,l])=>(
                           <div key={l}><div style={{fontSize:14,fontWeight:700}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
                         ))}
@@ -2416,176 +1859,16 @@ function App(){
                         {shiftHrsNum(sh)&&<span style={{fontSize:9,color:C.muted,marginLeft:6}}>{shiftHrsNum(sh)}h</span>}
                       </div>
                       {(()=>{
+                        const hrs=shiftHrsNum(sh);
+                        if(!hrs)return null;
                         const _p2=calcShiftPay(sh,sh.priorDayHrs||0);
-                        if(!_p2)return null;
+                        const base=_p2?_p2.gross-(parseFloat(sh.myTipCash)||0):0;
                         const tips=parseFloat(sh.myTipCash)||0;
-                        return(<>
-                          <span style={{fontSize:12,fontWeight:700,color:C.green}}>₪{_p2.wage.toFixed(0)}</span>
-                          {tips>0&&<span style={{fontSize:11,fontWeight:700,color:C.purple}}>+₪{tips.toFixed(0)} tips</span>}
-                        </>);
+                        const net=+(base+tips-PENSION*hrs).toFixed(0);
+                        return <span style={{fontSize:12,fontWeight:700,color:C.green}}>₪{net}</span>;
                       })()}
+                      <button onClick={()=>{setEditingShiftId(sh.id);setMainTab("tracker");}} style={{marginLeft:"auto",background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"3px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✏ Edit</button>
                     </div>
-                  {archiveEditMode&&(
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
-                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        <label style={{fontSize:9,color:!sh.endTime?C.red:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{!sh.endTime?"⚠ ":""}End Time</label>
-                        <input style={{background:C.surface,border:`1px solid ${!sh.endTime?"#EF444440":C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}} defaultValue={sh.endTime??""} placeholder="HH:MM" onBlur={e=>{const v=e.target.value.trim();if(v)updArchive(selWeek,sh.id,{endTime:v});}}/>
-                      </div>
-                      {(()=>{
-                        const segHrs=shiftHrsNum(sh)||0;
-                        const segPay=calcShiftPay(sh,sh.priorDayHrs||0);
-                        const tipsCash=parseFloat(sh.myTipCash||"");
-                        const baseRate=shiftBaseRate(sh);
-                        const basePerHr=segPay&&segHrs>0?((segPay.gross-(isNaN(tipsCash)?0:tipsCash))/segHrs):null;
-                        const tipsPerHr=(!isNaN(tipsCash)&&sh.myTipCash!==""&&segHrs>0)?(tipsCash/segHrs):null;
-                        const totalPerHr=basePerHr!=null&&tipsPerHr!=null?(basePerHr+tipsPerHr):basePerHr;
-                        const displayRate=totalPerHr!=null?totalPerHr.toFixed(2):baseRate.toFixed(2);
-                        const hrlyDefaultVal=totalPerHr!=null?totalPerHr.toFixed(2)+"₪/h":"";
-                        const tipsDefaultVal=!isNaN(tipsCash)&&sh.myTipCash!==""?tipsCash.toFixed(2):"";
-                        const effectiveBase=basePerHr||baseRate;
-                        const stH2=parseT(sh.startTime)?.h??0;
-                        const etH2=parseT(sh.endTime)?.h??0;
-                        const etM2=parseT(sh.endTime)?.m??0;
-                        const isSplit=sh.endTime&&stH2<18&&(sh.crossesMidnight||etH2>18||(etH2===18&&etM2>10));
-                        if(isSplit) return(
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                            <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>
-                              ₪{displayRate}/h
-                            </div>
-                            {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                            {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
-                          </div>
-                        );
-                        return(<>
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>₪/h rate</label>
-                            <div style={{background:C.dim,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"7px 10px",fontSize:12,fontFamily:mono,letterSpacing:"-0.3px"}}>
-                              ₪{displayRate}/h
-                            </div>
-                            {tipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{(basePerHr||baseRate).toFixed(2)} base + ₪{tipsPerHr.toFixed(2)} tips</span>}
-                            {tipsPerHr==null&&<span style={{fontSize:8,color:C.muted}}>base rate</span>}
-                          </div>
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total ₪/h received</label>
-                            <input
-                              key={`a_hrly_${sh.id}_${sh.myTipCash}`}
-                              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:totalPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}}
-                              placeholder={`₪${baseRate}/h`}
-                              defaultValue={hrlyDefaultVal}
-                              onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                              onBlur={e=>{
-                                const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                if(isNaN(raw)||segHrs<=0){e.target.value=hrlyDefaultVal;return;}
-                                const tipRate=raw>effectiveBase?raw-effectiveBase:0;
-                                updArchive(selWeek,sh.id,{myTipCash:+(tipRate*segHrs).toFixed(2)+""});
-                              }}
-                            />
-                          </div>
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <label style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>Total Tips ₪</label>
-                            <input
-                              key={`a_tips_${sh.id}_${sh.myTipCash}`}
-                              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:tipsPerHr!=null?C.text:C.muted,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"}}
-                              placeholder="0"
-                              defaultValue={tipsDefaultVal}
-                              onFocus={e=>{e.target.select();}}
-                              onBlur={e=>{
-                                const raw=parseFloat(e.target.value.trim());
-                                if(isNaN(raw)){return;}
-                                updArchive(selWeek,sh.id,{myTipCash:+(raw).toFixed(2)+""});
-                              }}
-                            />
-                          </div>
-                        </>);
-                      })()}
-                      {(()=>{
-                        const stH=parseT(sh.startTime)?.h??0;
-                        const etH=parseT(sh.endTime)?.h??0;
-                        const etM=parseT(sh.endTime)?.m??0;
-                        const splitPool=sh.endTime&&stH<18&&(sh.crossesMidnight||etH>18||(etH===18&&etM>10));
-                        if(!splitPool) return null;
-                        const morningMins=Math.max(0,(18*60)-(stH*60+(parseT(sh.startTime)?.m??0)));
-                        const totalMins=(()=>{let d=toMin(parseT(sh.endTime))-toMin(parseT(sh.startTime));if(sh.crossesMidnight||d<0)d+=1440;return d;})();
-                        const eveningMins=Math.max(0,totalMins-morningMins);
-                        const mH=+(morningMins/60).toFixed(2);
-                        const eH=+(eveningMins/60).toFixed(2);
-                        const mTips=parseFloat(sh.morningTips||"");
-                        const eTips=parseFloat(sh.eveningTips||"");
-                        const totalTips=(!isNaN(mTips)?mTips:0)+(!isNaN(eTips)?eTips:0);
-                        const mBr=shiftBaseRate(sh);
-                        const eBr=sh.shiftType==="Shabbat"?BASE_RATE:mBr;
-                        const mTipsPerHr=(!isNaN(mTips)&&sh.morningTips!=="")&&mH>0?(mTips/mH):null;
-                        const eTipsPerHr=(!isNaN(eTips)&&sh.eveningTips!=="")&&eH>0?(eTips/eH):null;
-                        const mHrlyDef=mTipsPerHr!=null?(mBr+mTipsPerHr).toFixed(2):"";
-                        const eHrlyDef=eTipsPerHr!=null?(eBr+eTipsPerHr).toFixed(2):"";
-                        const mTipsDef=!isNaN(mTips)&&sh.morningTips!==""?mTips.toFixed(2):"";
-                        const eTipsDef=!isNaN(eTips)&&sh.eveningTips!==""?eTips.toFixed(2):"";
-                        const aInp={background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:12,fontFamily:mono,outline:"none"};
-                        return(
-                          <div style={{gridColumn:"1 / -1",background:`${C.purple}08`,border:`1px solid ${C.purple}20`,borderRadius:7,padding:"8px 10px",marginTop:2}}>
-                            <div style={{fontSize:9,color:C.purple,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>⚡ Split Tip Pools ({mH.toFixed(1)}h morning + {eH.toFixed(1)}h evening)</div>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tips ₪</label>
-                                <input key={`asp_mt_${sh.id}_${sh.morningTips}`} style={aInp} placeholder="0" defaultValue={mTipsDef}
-                                  onFocus={e=>{e.target.select();}}
-                                  onBlur={e=>{
-                                    const raw=parseFloat(e.target.value.trim());
-                                    if(isNaN(raw)){return;}
-                                    const v=+(raw).toFixed(2);
-                                    updArchive(selWeek,sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
-                                  }}/>
-                                {mTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{mBr}/h base + ₪{mTipsPerHr.toFixed(2)}/h tips</span>}
-                              </div>
-                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tips ₪</label>
-                                <input key={`asp_et_${sh.id}_${sh.eveningTips}`} style={aInp} placeholder="0" defaultValue={eTipsDef}
-                                  onFocus={e=>{e.target.select();}}
-                                  onBlur={e=>{
-                                    const raw=parseFloat(e.target.value.trim());
-                                    if(isNaN(raw)){return;}
-                                    const v=+(raw).toFixed(2);
-                                    updArchive(selWeek,sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
-                                  }}/>
-                                {eTipsPerHr!=null&&<span style={{fontSize:8,color:C.muted}}>₪{eBr}/h base + ₪{eTipsPerHr.toFixed(2)}/h tips</span>}
-                              </div>
-                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                <label style={{fontSize:9,color:C.yellow,letterSpacing:"1px",textTransform:"uppercase"}}>☀ Morning Tip ₪/H</label>
-                                <input key={`asp_mh_${sh.id}_${sh.morningTips}`} style={aInp} placeholder="tip ₪/h or total ₪/h" defaultValue={mHrlyDef}
-                                  onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                  onBlur={e=>{
-                                    const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                    if(isNaN(raw)||mH<=0){e.target.value=mHrlyDef;return;}
-                                    const tipRate=raw>mBr?raw-mBr:raw;
-                                    const v=+(tipRate*mH).toFixed(2);
-                                    updArchive(selWeek,sh.id,{morningTips:v+"",myTipCash:(v+(!isNaN(eTips)?eTips:0))>0?(v+(!isNaN(eTips)?eTips:0))+"":sh.myTipCash});
-                                  }}/>
-                              </div>
-                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                                <label style={{fontSize:9,color:C.acc,letterSpacing:"1px",textTransform:"uppercase"}}>🌙 Evening Tip ₪/H</label>
-                                <input key={`asp_eh_${sh.id}_${sh.eveningTips}`} style={aInp} placeholder="tip ₪/h or total ₪/h" defaultValue={eHrlyDef}
-                                  onFocus={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))e.target.value=v.toFixed(2);e.target.select();}}
-                                  onBlur={e=>{
-                                    const raw=parseFloat(e.target.value.replace("₪/h","").trim());
-                                    if(isNaN(raw)||eH<=0){e.target.value=eHrlyDef;return;}
-                                    const tipRate=raw>eBr?raw-eBr:raw;
-                                    const v=+(tipRate*eH).toFixed(2);
-                                    updArchive(selWeek,sh.id,{eveningTips:v+"",myTipCash:((!isNaN(mTips)?mTips:0)+v)>0?((!isNaN(mTips)?mTips:0)+v)+"":sh.myTipCash});
-                                  }}/>
-                              </div>
-                            </div>
-                            {totalTips>0&&(
-                              <div style={{fontSize:10,color:C.purple,fontWeight:700,marginTop:6,display:"flex",gap:8,alignItems:"center"}}>
-                                <span>Total: ₪{totalTips.toFixed(0)}</span>
-                                <span style={{fontSize:9,color:C.muted,fontWeight:400}}>☀₪{isNaN(mTips)?0:mTips.toFixed(0)} + 🌙₪{isNaN(eTips)?0:eTips.toFixed(0)}</span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
                   </div>
                 ))}
 
@@ -2613,128 +1896,58 @@ function App(){
           </div>
         )}
 
-        {/* ══════════════ STATISTICS TAB ══════════════ */}
-        {mainTab==="statistics"&&(
+        {/* ══════════════ PATTERNS TAB ══════════════ */}
+        {mainTab==="patterns"&&(
           <div>
             {allArchived.length===0?(
               <div style={{textAlign:"center",padding:"44px 20px",color:C.muted}}>
                 <div style={{fontSize:36,marginBottom:10}}>📊</div>
                 <div style={{fontFamily:sans,fontWeight:700,fontSize:13,color:C.text,marginBottom:5}}>No data yet</div>
-                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see shift statistics</div>
+                <div style={{fontSize:11}}>Upload schedules in the Archive tab to see patterns</div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
-                {/* ── Table of Contents ── */}
-                {statSections.length>0&&(
-                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>Jump to section</div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                      {statSections.map(sec=>(
-                        <button key={sec.id} onClick={()=>scrollTo(sec.id)}
-                          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,color:C.text,padding:"5px 11px",fontSize:10,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap",transition:"background .12s"}}
-                          onMouseOver={e=>{e.currentTarget.style.background=`${C.acc}18`;e.currentTarget.style.borderColor=`${C.acc}50`;e.currentTarget.style.color=C.acc;}}
-                          onMouseOut={e=>{e.currentTarget.style.background=C.surface;e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.text;}}>
-                          <span>{sec.icon}</span><span>{sec.label}</span>
-                        </button>
-                      ))}
+                {/* Day of week */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Day of Week Frequency</div>
+                  {DAYS.map((day,i)=>(
+                    <div key={day} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
+                      <div style={{width:26,fontSize:10,color:i===6?C.purple:i===5?C.yellow:C.muted,fontWeight:i>=5?"700":"400"}}>{day}</div>
+                      <Bar value={dayFreq[i]} max={maxDayFreq} color={i===6?C.purple:i===5?C.yellow:C.acc}/>
+                      <div style={{width:18,fontSize:10,color:C.muted,textAlign:"right"}}>{dayFreq[i]}</div>
+                      <div style={{width:30,fontSize:9,color:C.muted}}>{allArchived.length>0?Math.round((dayFreq[i]/allArchived.length)*100)+"%":""}</div>
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
 
-                {/* ── Earnings Averages (from shifts) ── */}
-                {allArchived.length>0&&(
-                  <div id="stat-earnings-avg" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💰 Earnings Averages · Shifts</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      {[["Avg / Week",avgWeekNet],["Avg / Month",avgMonthNet]].map(([lbl,val])=>(
-                        <div key={lbl} style={{background:C.surface,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
-                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(val).toLocaleString()}</div>
-                          <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginTop:2}}>{lbl}</div>
-                        </div>
-                      ))}
+                {/* Morning vs Evening */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Morning vs Evening Split</div>
+                  {[["🌅 Morning (<16:00)",morningCount,C.yellow],["🌙 Evening (≥16:00)",eveningCount,C.acc]].map(([label,val,color])=>(
+                    <div key={label} style={{marginBottom:9}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color}}>{label}</span><span style={{fontSize:10,color,fontWeight:700}}>{val} ({allArchived.length>0?Math.round((val/allArchived.length)*100):0}%)</span></div>
+                      <Bar value={val} max={allArchived.length} color={color} height={8}/>
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
 
-                {/* ── Monthly net (from shifts) ── */}
-                {monthlyNetArr.length>0&&(
-                  <div id="stat-monthly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📊 Net Pay by Month · Shifts</div>
-                    {monthlyNetArr.map(([mk,val])=>{
-                      const [yr,mo2]=mk.split("-").map(Number);
-                      const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
-                      return(
-                        <div key={mk} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
-                          <div style={{width:44,fontSize:10,color:C.muted,flexShrink:0}}>{lbl}</div>
-                          <Bar value={val} max={maxMonthNet} color={C.green} height={8}/>
-                          <div style={{width:46,fontSize:10,color:C.green,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                {/* Shift length distribution */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Shift Length Distribution</div>
+                  {[["Under 4h",lenBuckets[0],C.red],["4–6 hours",lenBuckets[1],C.yellow],["6–8 hours",lenBuckets[2],C.acc],["8h+",lenBuckets[3],C.green]].map(([label,val,color])=>(
+                    <div key={label} style={{display:"flex",alignItems:"center",gap:9,marginBottom:7}}>
+                      <div style={{width:58,fontSize:10,color:C.muted}}>{label}</div>
+                      <Bar value={val} max={maxLen} color={color}/>
+                      <div style={{width:14,fontSize:10,color:C.muted,textAlign:"right"}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
 
-                {/* ── Weekly net (from shifts) ── */}
-                {weeklyNet.length>1&&(
-                  <div id="stat-weekly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📉 Net Pay by Week · Shifts</div>
-                    {weeklyNet.map(w=>(
-                      <div key={w.key} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                        <div style={{width:36,fontSize:8,color:C.muted,flexShrink:0}}>{fmtShort(w.weekStart)}</div>
-                        <Bar value={w.net} max={maxWeekNet} color={C.purple} height={6}/>
-                        <div style={{width:46,fontSize:9,color:C.purple,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{w.net.toLocaleString()}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Day of Week ── */}
-                {allArchived.length>0&&(
-                  <div id="stat-dayfreq" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📅 Day of Week Frequency</div>
-                    {DAYS.map((day,i)=>(
-                      <div key={day} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
-                        <div style={{width:26,fontSize:10,color:i===6?C.purple:i===5?C.yellow:C.muted,fontWeight:i>=5?"700":"400"}}>{day}</div>
-                        <Bar value={dayFreq[i]} max={maxDayFreq} color={i===6?C.purple:i===5?C.yellow:C.acc}/>
-                        <div style={{width:18,fontSize:10,color:C.muted,textAlign:"right"}}>{dayFreq[i]}</div>
-                        <div style={{width:30,fontSize:9,color:C.muted}}>{allArchived.length>0?Math.round((dayFreq[i]/allArchived.length)*100)+"%":""}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Morning vs Evening ── */}
-                {allArchived.length>0&&(
-                  <div id="stat-morn-eve" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>🌅 Morning vs Evening Split</div>
-                    {[["🌅 Morning (<16:00)",morningCount,C.yellow],["🌙 Evening (≥16:00)",eveningCount,C.acc]].map(([label,val,color])=>(
-                      <div key={label} style={{marginBottom:9}}>
-                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color}}>{label}</span><span style={{fontSize:10,color,fontWeight:700}}>{val} ({allArchived.length>0?Math.round((val/allArchived.length)*100):0}%)</span></div>
-                        <Bar value={val} max={allArchived.length} color={color} height={8}/>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Shift Length Distribution ── */}
-                {allArchived.length>0&&(
-                  <div id="stat-shift-len" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>⏱ Shift Length Distribution</div>
-                    {[["Under 4h",lenBuckets[0],C.red],["4–6 hours",lenBuckets[1],C.yellow],["6–8 hours",lenBuckets[2],C.acc],["8h+",lenBuckets[3],C.green]].map(([label,val,color])=>(
-                      <div key={label} style={{display:"flex",alignItems:"center",gap:9,marginBottom:7}}>
-                        <div style={{width:58,fontSize:10,color:C.muted}}>{label}</div>
-                        <Bar value={val} max={maxLen} color={color}/>
-                        <div style={{width:14,fontSize:10,color:C.muted,textAlign:"right"}}>{val}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Weekly Hours: You vs Team ── */}
+                {/* Weekly hrs: you vs team */}
                 {weeklyTrend.length>1&&(
-                  <div id="stat-weekly-hrs" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:5}}>👥 Weekly Hours: You vs Team Average</div>
+                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:5}}>Weekly Hours: You vs Team Average</div>
                     <div style={{display:"flex",gap:12,marginBottom:9}}>
                       {[[C.acc,"You"],[C.dim,"Team avg"]].map(([c,l])=>(
                         <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:c}}><div style={{width:9,height:3,background:c,borderRadius:1}}/>{l}</div>
@@ -2752,247 +1965,27 @@ function App(){
                   </div>
                 )}
 
-                {/* ── Monthly Hours ── */}
-                {allArchived.length>0&&(
-                  <div id="stat-monthly-hrs" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>🗓 Monthly Hours</div>
-                    {MONTHS.map((mn,i)=>{
-                      if(monthlyHrs[i]===0)return null;
-                      return(
-                        <div key={mn} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
-                          <div style={{width:26,fontSize:10,color:C.muted}}>{mn}</div>
-                          <Bar value={monthlyHrs[i]} max={maxMonthHrs} color={C.green} height={8}/>
-                          <div style={{width:34,fontSize:10,color:C.green,textAlign:"right",fontWeight:700}}>{monthlyHrs[i].toFixed(0)}h</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                {/* Monthly hours */}
+                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>Monthly Hours</div>
+                  {MONTHS.map((mn,i)=>{
+                    if(monthlyHrs[i]===0)return null;
+                    return(
+                      <div key={mn} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
+                        <div style={{width:26,fontSize:10,color:C.muted}}>{mn}</div>
+                        <Bar value={monthlyHrs[i]} max={maxMonthHrs} color={C.green} height={8}/>
+                        <div style={{width:34,fontSize:10,color:C.green,textAlign:"right",fontWeight:700}}>{monthlyHrs[i].toFixed(0)}h</div>
+                      </div>
+                    );
+                  })}
+                </div>
 
               </div>
             )}
           </div>
         )}
 
-        {/* ══════════════ PAY SLIPS TAB ══════════════ */}
-        {mainTab==="payslips"&&(
-          <div>
-            <input ref={slipInputRef} type="file" accept="application/pdf,image/*" multiple style={{display:"none"}} disabled={paySlipUploading}
-              onChange={e=>{if(e.target.files?.length){addPaySlips(e.target.files);e.target.value="";}}}/>
-
-            {slipMsg&&<div style={{background:slipMsg.ok?`${C.green}12`:`${C.red}12`,border:`1px solid ${slipMsg.ok?C.green:C.red}30`,borderRadius:7,padding:"8px 12px",fontSize:10,color:slipMsg.ok?C.green:C.red,display:"flex",gap:8,alignItems:"center",marginBottom:12,animation:"slideIn .2s ease"}}><span style={{flex:1}}>{slipMsg.text}</span><button onClick={()=>setSlipMsg(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer"}}>✕</button></div>}
-
-            <div style={{display:"flex",flexDirection:"column",gap:14}}>
-
-              {/* TOC */}
-              {slipSections.length>1&&(
-                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 13px"}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:8}}>Jump to section</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                    {slipSections.map(sec=>(
-                      <button key={sec.id} onClick={()=>scrollTo(sec.id)}
-                        style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,color:C.text,padding:"5px 11px",fontSize:10,cursor:"pointer",fontFamily:mono,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}
-                        onMouseOver={e=>{e.currentTarget.style.background=`${C.acc}18`;e.currentTarget.style.borderColor=`${C.acc}50`;e.currentTarget.style.color=C.acc;}}
-                        onMouseOut={e=>{e.currentTarget.style.background=C.surface;e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.text;}}>
-                        <span>{sec.icon}</span><span>{sec.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Income Trends ── */}
-              {slipsAnalyzed.length>0&&slipData.some(s=>s.net!=null||s.gross!=null)&&(
-                <div id="slip-income" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📈 Income Trends</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:7,marginBottom:12}}>
-                    {avgSlipGross>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.text}}>₪{Math.round(avgSlipGross).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Gross</div></div>}
-                    {avgSlipNet>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.green}}>₪{Math.round(avgSlipNet).toLocaleString()}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Avg Net</div></div>}
-                    {slipWithNet.length>0&&<div style={{background:C.surface,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:C.acc}}>{slipWithNet.length}</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Pay Slips</div></div>}
-                    {incomeGrowth!==null&&<div style={{background:`${incomeGrowth>=0?C.green:C.red}15`,border:`1px solid ${incomeGrowth>=0?C.green:C.red}30`,borderRadius:8,padding:"9px 10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:700,color:incomeGrowth>=0?C.green:C.red}}>{incomeGrowth>=0?"+":""}{incomeGrowth.toFixed(1)}%</div><div style={{fontSize:8,color:C.muted,marginTop:1,textTransform:"uppercase",letterSpacing:"1px"}}>Growth</div></div>}
-                  </div>
-                  {slipData.map(s=>{
-                    const [yr,mo2]=s.month.split("-").map(Number);
-                    const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
-                    return(
-                      <div key={s.month} style={{marginBottom:8}}>
-                        <div style={{fontSize:9,color:C.muted,marginBottom:3}}>{lbl}</div>
-                        <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                          {s.gross!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.muted}}>Gross</div><Bar value={s.gross} max={maxSlipChart} color={`${C.text}60`} height={5}/><div style={{width:52,fontSize:8,color:C.muted,textAlign:"right",flexShrink:0}}>₪{Math.round(s.gross).toLocaleString()}</div></div>}
-                          {s.net!=null&&<div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:36,fontSize:8,color:C.green}}>Net</div><Bar value={s.net} max={maxSlipChart} color={C.green} height={8}/><div style={{width:52,fontSize:9,color:C.green,fontWeight:700,textAlign:"right",flexShrink:0}}>₪{Math.round(s.net).toLocaleString()}</div></div>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div style={{display:"flex",gap:12,marginTop:4}}>
-                    {[[`${C.text}60`,"Gross"],[C.green,"Net"]].map(([c,l])=>(
-                      <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:C.muted}}><div style={{width:9,height:3,background:c,borderRadius:1}}/>{l}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Tax & Deductions ── */}
-              {slipsAnalyzed.length>0&&(totalTaxPaid>0||totalBituach>0||totalPension>0||avgNetPct>0)&&(
-                <div id="slip-deductions" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>🏦 Tax &amp; Deductions</div>
-                  {avgNetPct>0&&(
-                    <div style={{marginBottom:13}}>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                        <span style={{fontSize:9,color:C.muted}}>Average take-home ratio</span>
-                        <span style={{fontSize:10,fontWeight:700,color:C.green}}>{avgNetPct.toFixed(0)}%</span>
-                      </div>
-                      <div style={{height:14,background:C.surface,borderRadius:7,overflow:"hidden",display:"flex"}}>
-                        <div style={{width:`${avgNetPct}%`,background:C.green,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:"#fff",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{avgNetPct.toFixed(0)}% take-home</span></div>
-                        <div style={{flex:1,background:`${C.red}50`,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:8,color:C.red,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden"}}>{(100-avgNetPct).toFixed(0)}% deducted</span></div>
-                      </div>
-                      {avgSlipGross>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:8,color:C.muted}}><span>Avg net ₪{Math.round(avgSlipNet).toLocaleString()}</span><span>Avg deductions ₪{Math.round(avgSlipGross-avgSlipNet).toLocaleString()}</span></div>}
-                    </div>
-                  )}
-                  {[["Income Tax",totalTaxPaid,C.red],["Bituach Leumi",totalBituach,C.yellow],["Pension",totalPension,C.purple]].filter(([,v])=>v>0).map(([lbl,val,col])=>{
-                    const maxD=Math.max(totalTaxPaid,totalBituach,totalPension,1);
-                    return(<div key={lbl} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}><div style={{width:74,fontSize:9,color:C.muted,flexShrink:0}}>{lbl}</div><Bar value={val} max={maxD} color={col}/><div style={{width:58,fontSize:9,color:col,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div></div>);
-                  })}
-                  {taxSamples.length>1&&(
-                    <div style={{marginTop:10}}>
-                      <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Tax rate per month</div>
-                      {taxSamples.map(s=>{
-                        const rate=(s.tax/s.gross)*100;
-                        const [yr,mo2]=s.month.split("-").map(Number);
-                        return(<div key={s.month} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}><div style={{width:44,fontSize:9,color:C.muted,flexShrink:0}}>{MONTHS[mo2-1]} '{String(yr).slice(2)}</div><Bar value={rate} max={Math.max(...taxSamples.map(x=>(x.tax/x.gross)*100),20)} color={C.red}/><div style={{width:34,fontSize:9,color:C.red,textAlign:"right",fontWeight:700,flexShrink:0}}>{rate.toFixed(1)}%</div></div>);
-                      })}
-                    </div>
-                  )}
-                  {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).length>0&&(
-                    <div style={{marginTop:10}}>
-                      <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:6}}>Per-slip breakdown</div>
-                      {slipData.filter(s=>s.tax!=null||s.bituach!=null||s.pension!=null).map(s=>{
-                        const [yr,mo2]=s.month.split("-").map(Number);
-                        const total=(s.tax||0)+(s.bituach||0)+(s.pension||0)+(s.health||0);
-                        return(<div key={s.month} style={{background:C.surface,borderRadius:7,padding:"7px 9px",marginBottom:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:9,color:C.muted}}>{MONTHS[mo2-1]} '{String(yr).slice(2)}</span><span style={{fontSize:9,color:C.muted}}>₪{Math.round(total).toLocaleString()} deducted</span></div><div style={{display:"flex",gap:"4px 12px",flexWrap:"wrap"}}>{s.tax!=null&&<span style={{fontSize:9,color:C.red}}>Tax ₪{s.tax.toLocaleString()}{s.gross?` (${((s.tax/s.gross)*100).toFixed(1)}%)`:""}</span>}{s.bituach!=null&&<span style={{fontSize:9,color:C.yellow}}>Bituach ₪{s.bituach.toLocaleString()}</span>}{s.pension!=null&&<span style={{fontSize:9,color:C.purple}}>Pension ₪{s.pension.toLocaleString()}</span>}{s.health!=null&&<span style={{fontSize:9,color:C.acc}}>Health ₪{s.health.toLocaleString()}</span>}</div></div>);
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── Smart Insights ── */}
-              {(slipInsights.length>0||otPct>0)&&(
-                <div id="slip-insights" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💡 Smart Insights</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {slipInsights.map((ins,i)=>(
-                      <div key={i} style={{background:`${ins.col}10`,border:`1px solid ${ins.col}25`,borderLeft:`3px solid ${ins.col}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}>
-                        <span style={{fontSize:14,flexShrink:0}}>{ins.icon}</span>
-                        <span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{ins.text}</span>
-                      </div>
-                    ))}
-                    {otPct>0&&<div style={{background:`${C.acc}10`,border:`1px solid ${C.acc}25`,borderLeft:`3px solid ${C.acc}`,borderRadius:7,padding:"8px 12px",display:"flex",alignItems:"flex-start",gap:8}}><span style={{fontSize:14,flexShrink:0}}>⚡</span><span style={{fontSize:10,color:C.text,lineHeight:1.5}}>{otPct.toFixed(0)}% of your work-hours are overtime (from archived shifts)</span></div>}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Pay Slip list + upload ── */}
-              <div id="slip-list" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:6,flexWrap:"wrap"}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>🗂 Pay Slips</div>
-                  <div style={{display:"flex",gap:5,flexShrink:0}}>
-                    {paySlips.some(s=>s.type==='application/pdf')&&(
-                      <button onClick={reanalyzePaySlips} disabled={reanalyzing||paySlipUploading}
-                        title="Re-run PDF extraction on all stored pay slips (useful if analysis showed wrong values)"
-                        style={{background:`${C.yellow}15`,border:`1px solid ${C.yellow}30`,borderRadius:7,color:C.yellow,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:reanalyzing?0.5:1}}>
-                        {reanalyzing?"🔄 Analyzing…":"🔄 Re-analyze"}
-                      </button>
-                    )}
-                    <button onClick={()=>slipInputRef.current?.click()} disabled={paySlipUploading}
-                      style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"5px 10px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono,opacity:paySlipUploading?0.5:1}}>
-                      {paySlipUploading?"Uploading...":"+ Upload"}
-                    </button>
-                  </div>
-                </div>
-                <div onDragOver={e=>{e.preventDefault();setSlipDragOver(true);}} onDragLeave={()=>setSlipDragOver(false)}
-                  onDrop={e=>{e.preventDefault();setSlipDragOver(false);if(e.dataTransfer.files?.length)addPaySlips(e.dataTransfer.files);}}
-                  onClick={()=>!paySlipUploading&&slipInputRef.current?.click()}
-                  style={{border:`2px dashed ${slipDragOver?C.acc:C.border}`,borderRadius:8,padding:"12px",textAlign:"center",marginBottom:paySlips.length?10:0,cursor:"pointer",background:slipDragOver?`${C.acc}08`:"transparent",transition:"all .15s"}}>
-                  <div style={{fontSize:10,color:slipDragOver?C.acc:C.muted}}>{paySlipUploading?"Processing files…":"Drop PDF/image files here or click — multiple files supported"}</div>
-                </div>
-                {paySlips.length===0?(
-                  <div style={{textAlign:"center",padding:"14px 0",color:C.muted,fontSize:11}}>No pay slips uploaded yet</div>
-                ):(
-                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    {[...paySlips].reverse().map(sl=>{
-                      const a=sl.analysis;
-                      return(
-                        <div key={sl.id} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <div style={{fontSize:15}}>{sl.type==="application/pdf"?"📄":"🖼"}</div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:11,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sl.name}</div>
-                              <div style={{fontSize:9,color:C.muted,marginTop:1}}>{sl.monthKey} · {(sl.size/1024).toFixed(0)} KB</div>
-                            </div>
-                            <button onClick={()=>openPreviewSlip(sl.id)} style={{background:`${C.acc}18`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 9px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:mono}}>👁 View</button>
-                            <button onClick={()=>deletePaySlip(sl.id)} style={{background:`${C.red}12`,border:`1px solid ${C.red}30`,borderRadius:6,color:C.red,padding:"4px 7px",fontSize:9,cursor:"pointer",fontFamily:mono}}>✕</button>
-                          </div>
-                          {a&&(
-                            <div style={{display:"flex",flexWrap:"wrap",gap:"4px 10px",marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`}}>
-                              {a.gross!=null&&<span style={{fontSize:9,color:C.muted}}>Gross <b style={{color:C.text}}>₪{a.gross.toLocaleString()}</b></span>}
-                              {a.net!=null&&<span style={{fontSize:9,color:C.muted}}>Net <b style={{color:C.green}}>₪{a.net.toLocaleString()}</b></span>}
-                              {a.tax!=null&&<span style={{fontSize:9,color:C.muted}}>Tax <b style={{color:C.red}}>₪{a.tax.toLocaleString()}</b></span>}
-                              {a.bituach!=null&&<span style={{fontSize:9,color:C.muted}}>Bituach <b style={{color:C.yellow}}>₪{a.bituach.toLocaleString()}</b></span>}
-                              {a.pension!=null&&<span style={{fontSize:9,color:C.muted}}>Pension <b style={{color:C.purple}}>₪{a.pension.toLocaleString()}</b></span>}
-                              {a.health!=null&&<span style={{fontSize:9,color:C.muted}}>Health <b style={{color:C.acc}}>₪{a.health.toLocaleString()}</b></span>}
-                              {a.hours!=null&&<span style={{fontSize:9,color:C.muted}}>Hours <b style={{color:C.text}}>{a.hours}h</b></span>}
-                              {a.net!=null&&a.hours!=null&&a.hours>0&&<span style={{fontSize:9,color:C.muted}}>₪/h <b style={{color:C.acc}}>{(a.net/a.hours).toFixed(1)}</b></span>}
-                            </div>
-                          )}
-                          {!a&&<div style={{fontSize:9,color:C.muted,marginTop:5}}>⚠ Re-upload to extract data from this file</div>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-            </div>
-          </div>
-        )}
-
       </div>
-
-      {/* ── Pay slip preview modal ── */}
-      {previewSlip&&(
-        <div onClick={closePreview} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000dd",zIndex:3000,display:"flex",flexDirection:"column",padding:0}}>
-          <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-            {/* Header */}
-            <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <div style={{flex:1,fontSize:11,color:C.text,fontWeight:700,fontFamily:mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewSlip.name}</div>
-              {previewSlip.analysis&&(
-                <div style={{display:"flex",gap:"6px 14px",flexWrap:"wrap",fontSize:9,color:C.muted}}>
-                  {previewSlip.analysis.gross!=null&&<span>Gross <b style={{color:C.text}}>₪{previewSlip.analysis.gross.toLocaleString()}</b></span>}
-                  {previewSlip.analysis.net!=null&&<span>Net <b style={{color:C.green}}>₪{previewSlip.analysis.net.toLocaleString()}</b></span>}
-                  {previewSlip.analysis.tax!=null&&<span>Tax <b style={{color:C.red}}>₪{previewSlip.analysis.tax.toLocaleString()}</b></span>}
-                  {previewSlip.analysis.bituach!=null&&<span>Bituach <b style={{color:C.yellow}}>₪{previewSlip.analysis.bituach.toLocaleString()}</b></span>}
-                  {previewSlip.analysis.pension!=null&&<span>Pension <b style={{color:C.purple}}>₪{previewSlip.analysis.pension.toLocaleString()}</b></span>}
-                  {previewSlip.analysis.hours!=null&&<span>Hours <b style={{color:C.text}}>{previewSlip.analysis.hours}h</b></span>}
-                </div>
-              )}
-              <button onClick={closePreview} style={{background:`${C.red}20`,border:`1px solid ${C.red}40`,borderRadius:6,color:C.red,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono,flexShrink:0}}>✕ Close</button>
-            </div>
-            {/* Content */}
-            <div style={{flex:1,overflow:"hidden",background:"#fff"}}>
-              {previewSlip.type==="application/pdf"?(
-                <object data={previewSlip.blobUrl} type="application/pdf" style={{width:"100%",height:"100%",display:"block"}}>
-                  <iframe src={previewSlip.blobUrl} style={{width:"100%",height:"100%",border:"none"}}/>
-                </object>
-              ):(
-                <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,overflow:"auto"}}>
-                  <img src={previewSlip.blobUrl} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} alt={previewSlip.name}/>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Auth toast notification ── */}
       {authToast&&(
@@ -3044,15 +2037,3 @@ function App(){
     </div>
   );
 }
-
-
-  const container = document.getElementById('root');
-  const root = ReactDOM.createRoot(container);
-  root.render(React.createElement(App));
-  document.getElementById('loading').style.display = 'none';
-} catch(e) {
-  showErr('App Error', e.message + '\n\n' + (e.stack||''));
-}
-</script>
-</body>
-</html>
