@@ -964,6 +964,14 @@ function App(){
         setPaySlips(data.paySlips);
         await window.storage.set(PAYSLIP_IDX,JSON.stringify(data.paySlips)).catch(()=>{});
       }
+      if(data.archiveFiles){
+        for(const [key,val] of Object.entries(data.archiveFiles))
+          await window.storage.set(FILE_PFX+key,val).catch(()=>{});
+      }
+      if(data.paySlipFiles){
+        for(const [id,val] of Object.entries(data.paySlipFiles))
+          await window.storage.set(PAYSLIP_PFX+id,val).catch(()=>{});
+      }
       setDriveStatus("saved");setDriveError(null);
       return true;
     }catch(e){
@@ -977,10 +985,13 @@ function App(){
     clearTimeout(driveSaveTimerRef.current);
     setDriveStatus("saving");
     try{
-      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
+      const archiveFiles={};
+      for(const key of archiveIndex){const r=await window.storage.get(FILE_PFX+key).catch(()=>null);if(r)archiveFiles[key]=r.value;}
+      const paySlipFiles={};
+      for(const sl of paySlips){const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);if(r)paySlipFiles[sl.id]=r.value;}
+      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,archiveFiles,paySlipFiles,savedAt:new Date().toISOString(),version:"v70"};
       let result=await driveWrite(token,driveFileIdRef.current,payload);
       if(result?._gone){
-        // File was deleted from Drive — create a new one
         driveFileIdRef.current=null;
         result=await driveWrite(token,null,payload);
       }
@@ -995,7 +1006,11 @@ function App(){
     driveSaveTimerRef.current=setTimeout(async()=>{
       setDriveStatus("saving");
       try{
-        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,savedAt:new Date().toISOString(),version:"v70"};
+        const archiveFiles={};
+        for(const key of archiveIndexData){const r=await window.storage.get(FILE_PFX+key).catch(()=>null);if(r)archiveFiles[key]=r.value;}
+        const paySlipFiles={};
+        for(const sl of paySlips){const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);if(r)paySlipFiles[sl.id]=r.value;}
+        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,archiveFiles,paySlipFiles,savedAt:new Date().toISOString(),version:"v70"};
         let result=await driveWrite(token,driveFileIdRef.current,payload);
         if(result?._gone){driveFileIdRef.current=null;result=await driveWrite(token,null,payload);}
         driveFileIdRef.current=result?.id||driveFileIdRef.current;
