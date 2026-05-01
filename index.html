@@ -2756,7 +2756,7 @@ function App(){
                   <div id="stat-earnings-avg" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💰 Earnings Averages · Shifts</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:tipSharePct>0?10:0}}>
-                      {[["Avg Net / Week",avgWeekNet,C.green],["Avg Net / Month",avgMonthNet,C.green],["Avg Base / Shift",avgShiftWage,C.acc],["Avg Tips / Shift",avgShiftTips,C.yellow]].map(([lbl,val,col])=>(
+                      {[["Avg Net+Tips / Week",avgWeekNet,C.green],["Avg Net+Tips / Month",avgMonthNet,C.green],["Avg No-Tips / Shift",avgShiftWage,C.acc],["Avg Tips / Shift",avgShiftTips,C.yellow]].map(([lbl,val,col])=>(
                         <div key={lbl} style={{background:C.surface,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
                           <div style={{fontSize:16,fontWeight:700,color:col,letterSpacing:"-0.5px"}}>₪{Math.round(val).toLocaleString()}</div>
                           <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginTop:2}}>{lbl}</div>
@@ -2766,14 +2766,14 @@ function App(){
                     {tipSharePct>0&&(
                       <div style={{background:C.surface,borderRadius:8,padding:"8px 12px"}}>
                         <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:9,color:C.muted}}>
-                          <span>Base pay</span><span>Tips</span>
+                          <span>Net (no tips)</span><span>Tips only</span>
                         </div>
                         <div style={{height:10,background:C.dim,borderRadius:5,overflow:"hidden",display:"flex"}}>
                           <div style={{width:`${100-tipSharePct}%`,background:C.acc,borderRadius:"5px 0 0 5px"}}/>
                           <div style={{flex:1,background:C.yellow,borderRadius:"0 5px 5px 0"}}/>
                         </div>
                         <div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:8,color:C.muted}}>
-                          <span style={{color:C.acc}}>{100-tipSharePct}% base (₪{Math.round(totalEarnWage).toLocaleString()})</span>
+                          <span style={{color:C.acc}}>{100-tipSharePct}% no-tips (₪{Math.round(totalEarnWage).toLocaleString()})</span>
                           <span style={{color:C.yellow}}>{tipSharePct}% tips (₪{Math.round(totalEarnTips).toLocaleString()})</span>
                         </div>
                       </div>
@@ -2786,7 +2786,7 @@ function App(){
                   <div id="stat-dow-earn" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>💸 Avg Earnings by Day of Week</div>
                     <div style={{display:"flex",gap:12,marginBottom:10}}>
-                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                      {[[C.acc,"Net (no tips)"],[C.yellow,"Tips only"],[C.green,"Net + tips"]].map(([c,l])=>(
                         <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
                       ))}
                     </div>
@@ -2795,21 +2795,18 @@ function App(){
                       if(!d)return null;
                       const isBest=i===bestDowIdx;
                       return(
-                        <div key={day} style={{marginBottom:9,background:isBest?`${C.yellow}08`:undefined,borderRadius:isBest?7:0,padding:isBest?"6px 8px":"0 0 0 0"}}>
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                        <div key={day} style={{marginBottom:10,background:isBest?`${C.yellow}08`:undefined,borderRadius:isBest?7:0,padding:isBest?"6px 8px":0}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
                             <span style={{fontSize:10,fontWeight:isBest?700:400,color:isBest?C.yellow:(i===6?C.purple:i===5?C.yellow:C.text)}}>{day}{isBest?" ⭐":""}</span>
-                            <span style={{fontSize:9,color:C.muted}}>{d.cnt} shift{d.cnt!==1?"s":""} · <b style={{color:C.green}}>₪{d.net.toLocaleString()} net</b></span>
+                            <span style={{fontSize:9,color:C.muted}}>{d.cnt} shift{d.cnt!==1?"s":""}</span>
                           </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                            <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
-                            <Bar value={d.wage} max={maxDowNet} color={C.acc} height={5}/>
-                            <div style={{width:40,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{d.wage.toLocaleString()}</div>
-                          </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6}}>
-                            <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
-                            <Bar value={d.tips} max={maxDowNet} color={C.yellow} height={5}/>
-                            <div style={{width:40,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{d.tips.toLocaleString()}</div>
-                          </div>
+                          {[["Net (no tips)",d.wage,C.acc],["Tips only",d.tips,C.yellow],["Net + tips",d.net,C.green]].map(([lbl,val,col])=>(
+                            <div key={lbl} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                              <div style={{width:68,fontSize:8,color:col,flexShrink:0}}>{lbl}</div>
+                              <Bar value={val} max={maxDowNet} color={col} height={5}/>
+                              <div style={{width:44,fontSize:8,color:col,textAlign:"right",fontWeight:lbl==="Net + tips"?700:400,flexShrink:0}}>₪{val.toLocaleString()}</div>
+                            </div>
+                          ))}
                         </div>
                       );
                     })}
@@ -2821,7 +2818,7 @@ function App(){
                   <div id="stat-monthly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>📊 Earnings by Month · Shifts</div>
                     <div style={{display:"flex",gap:12,marginBottom:10}}>
-                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                      {[[C.acc,"Net (no tips)"],[C.yellow,"Tips only"],[C.green,"Net + tips"]].map(([c,l])=>(
                         <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
                       ))}
                     </div>
@@ -2829,21 +2826,15 @@ function App(){
                       const [yr,mo2]=mk.split("-").map(Number);
                       const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
                       return(
-                        <div key={mk} style={{marginBottom:10}}>
-                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                            <span style={{fontSize:10,color:C.muted}}>{lbl}</span>
-                            <span style={{fontSize:10,color:C.green,fontWeight:700}}>₪{Math.round(v.net).toLocaleString()}</span>
-                          </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                            <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
-                            <Bar value={v.wage} max={maxMonthBreak} color={C.acc} height={5}/>
-                            <div style={{width:44,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{Math.round(v.wage).toLocaleString()}</div>
-                          </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6}}>
-                            <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
-                            <Bar value={v.tips} max={maxMonthBreak} color={C.yellow} height={5}/>
-                            <div style={{width:44,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{Math.round(v.tips).toLocaleString()}</div>
-                          </div>
+                        <div key={mk} style={{marginBottom:12}}>
+                          <div style={{fontSize:10,color:C.muted,marginBottom:5}}>{lbl}</div>
+                          {[["Net (no tips)",v.wage,C.acc],["Tips only",v.tips,C.yellow],["Net + tips",v.net,C.green]].map(([lbl2,val,col])=>(
+                            <div key={lbl2} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                              <div style={{width:68,fontSize:8,color:col,flexShrink:0}}>{lbl2}</div>
+                              <Bar value={val} max={maxMonthBreak} color={col} height={5}/>
+                              <div style={{width:48,fontSize:8,color:col,textAlign:"right",fontWeight:lbl2==="Net + tips"?700:400,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div>
+                            </div>
+                          ))}
                         </div>
                       );
                     })}
@@ -2855,26 +2846,20 @@ function App(){
                   <div id="stat-weekly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>📉 Earnings by Week · Shifts</div>
                     <div style={{display:"flex",gap:12,marginBottom:10}}>
-                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                      {[[C.acc,"Net (no tips)"],[C.yellow,"Tips only"],[C.green,"Net + tips"]].map(([c,l])=>(
                         <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
                       ))}
                     </div>
                     {weeklyBreakdown.map(w=>(
-                      <div key={w.key} style={{marginBottom:9}}>
-                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                          <span style={{fontSize:9,color:C.muted}}>{fmtShort(w.weekStart)}</span>
-                          <span style={{fontSize:9,color:C.green,fontWeight:700}}>₪{w.net.toLocaleString()}</span>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                          <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
-                          <Bar value={w.wage} max={maxWeekBreak} color={C.acc} height={5}/>
-                          <div style={{width:40,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{w.wage.toLocaleString()}</div>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:6}}>
-                          <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
-                          <Bar value={w.tips} max={maxWeekBreak} color={C.yellow} height={5}/>
-                          <div style={{width:40,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{w.tips.toLocaleString()}</div>
-                        </div>
+                      <div key={w.key} style={{marginBottom:12}}>
+                        <div style={{fontSize:9,color:C.muted,marginBottom:5}}>{fmtShort(w.weekStart)}</div>
+                        {[["Net (no tips)",w.wage,C.acc],["Tips only",w.tips,C.yellow],["Net + tips",w.net,C.green]].map(([lbl,val,col])=>(
+                          <div key={lbl} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <div style={{width:68,fontSize:8,color:col,flexShrink:0}}>{lbl}</div>
+                            <Bar value={val} max={maxWeekBreak} color={col} height={5}/>
+                            <div style={{width:44,fontSize:8,color:col,textAlign:"right",fontWeight:lbl==="Net + tips"?700:400,flexShrink:0}}>₪{val.toLocaleString()}</div>
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </div>
