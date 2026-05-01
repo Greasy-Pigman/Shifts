@@ -1692,6 +1692,24 @@ function App(){
   const monthlyNetArr=Object.entries(monthlyNetMap).sort(([a],[b])=>a.localeCompare(b));
   const maxMonthNet=Math.max(...monthlyNetArr.map(([,v])=>v),1);
   const avgMonthNet=monthlyNetArr.length>0?monthlyNetArr.reduce((s,[,v])=>s+v,0)/monthlyNetArr.length:0;
+  // ── Wage vs Tips breakdown ──────────────────────────────────────
+  const allShiftEarnings=allArchived.map(sh=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);if(!p)return null;const dow=sh.dayOfWeek??new Date(sh.date).getDay();return{date:sh.date,dow,wage:+(p.wage||0),tips:+(p.tips||0),net:+(p.net||0)};}).filter(Boolean);
+  const dowAccum=Array(7).fill(null).map(()=>({cnt:0,wage:0,tips:0,net:0}));
+  allShiftEarnings.forEach(s=>{const d=dowAccum[s.dow];d.cnt++;d.wage+=s.wage;d.tips+=s.tips;d.net+=s.net;});
+  const dowEarn=dowAccum.map(d=>d.cnt>0?{cnt:d.cnt,wage:+(d.wage/d.cnt).toFixed(0),tips:+(d.tips/d.cnt).toFixed(0),net:+(d.net/d.cnt).toFixed(0)}:null);
+  const maxDowNet=Math.max(...dowEarn.filter(Boolean).map(d=>d.net),1);
+  const bestDowIdx=dowEarn.reduce((bi,d,i)=>!d?bi:(!dowEarn[bi]||d.net>(dowEarn[bi]?.net??0)?i:bi),0);
+  const weeklyBreakdown=archiveIndex.map(key=>{const w=weekData[key];if(!w)return null;let wage=0,tips=0,net=0;(w.myShifts||[]).forEach(sh=>{const p=calcShiftPay(sh,sh.priorDayHrs||0);if(p){wage+=(p.wage||0);tips+=(p.tips||0);net+=(p.net||0);}});return{key,weekStart:w.weekStart,wage:+wage.toFixed(0),tips:+tips.toFixed(0),net:+net.toFixed(0)};}).filter(Boolean);
+  const maxWeekBreak=Math.max(...weeklyBreakdown.map(w=>w.net),1);
+  const monthlyBreakMap={};allShiftEarnings.forEach(s=>{const mk=s.date.slice(0,7);if(!monthlyBreakMap[mk])monthlyBreakMap[mk]={wage:0,tips:0,net:0};monthlyBreakMap[mk].wage+=s.wage;monthlyBreakMap[mk].tips+=s.tips;monthlyBreakMap[mk].net+=s.net;});
+  const monthlyBreakArr=Object.entries(monthlyBreakMap).sort(([a],[b])=>a.localeCompare(b));
+  const maxMonthBreak=Math.max(...monthlyBreakArr.map(([,v])=>v.net),1);
+  const totalEarnTips=allShiftEarnings.reduce((s,e)=>s+e.tips,0);
+  const totalEarnWage=allShiftEarnings.reduce((s,e)=>s+e.wage,0);
+  const totalEarnNet=allShiftEarnings.reduce((s,e)=>s+e.net,0);
+  const avgShiftWage=allShiftEarnings.length>0?+(totalEarnWage/allShiftEarnings.length).toFixed(0):0;
+  const avgShiftTips=allShiftEarnings.length>0?+(totalEarnTips/allShiftEarnings.length).toFixed(0):0;
+  const tipSharePct=totalEarnNet>0?+(totalEarnTips/totalEarnNet*100).toFixed(0):0;
 
   // ── Pay Slip Analytics ─────────────────────────────────────────
   const slipsAnalyzed=paySlips.filter(s=>s.analysis!=null).sort((a,b)=>a.monthKey.localeCompare(b.monthKey));
@@ -1733,8 +1751,9 @@ function App(){
   const statSections=[
     ...(allArchived.length>0?[
       {id:"stat-earnings-avg",label:"Earnings Avg",icon:"💰"},
-      {id:"stat-monthly-net",label:"Net by Month",icon:"📊"},
-      {id:"stat-weekly-net",label:"Net by Week",icon:"📉"},
+      {id:"stat-dow-earn",label:"By Day",icon:"💸"},
+      {id:"stat-monthly-net",label:"By Month",icon:"📊"},
+      {id:"stat-weekly-net",label:"By Week",icon:"📉"},
       {id:"stat-dayfreq",label:"Day Frequency",icon:"📅"},
       {id:"stat-morn-eve",label:"Morn/Eve",icon:"🌅"},
       {id:"stat-shift-len",label:"Shift Lengths",icon:"⏱"},
@@ -2736,44 +2755,126 @@ function App(){
                 {allArchived.length>0&&(
                   <div id="stat-earnings-avg" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
                     <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>💰 Earnings Averages · Shifts</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      {[["Avg / Week",avgWeekNet],["Avg / Month",avgMonthNet]].map(([lbl,val])=>(
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:tipSharePct>0?10:0}}>
+                      {[["Avg Net / Week",avgWeekNet,C.green],["Avg Net / Month",avgMonthNet,C.green],["Avg Base / Shift",avgShiftWage,C.acc],["Avg Tips / Shift",avgShiftTips,C.yellow]].map(([lbl,val,col])=>(
                         <div key={lbl} style={{background:C.surface,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
-                          <div style={{fontSize:18,fontWeight:700,color:C.green,letterSpacing:"-0.5px"}}>₪{Math.round(val).toLocaleString()}</div>
-                          <div style={{fontSize:9,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginTop:2}}>{lbl}</div>
+                          <div style={{fontSize:16,fontWeight:700,color:col,letterSpacing:"-0.5px"}}>₪{Math.round(val).toLocaleString()}</div>
+                          <div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginTop:2}}>{lbl}</div>
                         </div>
                       ))}
                     </div>
+                    {tipSharePct>0&&(
+                      <div style={{background:C.surface,borderRadius:8,padding:"8px 12px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:9,color:C.muted}}>
+                          <span>Base pay</span><span>Tips</span>
+                        </div>
+                        <div style={{height:10,background:C.dim,borderRadius:5,overflow:"hidden",display:"flex"}}>
+                          <div style={{width:`${100-tipSharePct}%`,background:C.acc,borderRadius:"5px 0 0 5px"}}/>
+                          <div style={{flex:1,background:C.yellow,borderRadius:"0 5px 5px 0"}}/>
+                        </div>
+                        <div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:8,color:C.muted}}>
+                          <span style={{color:C.acc}}>{100-tipSharePct}% base (₪{Math.round(totalEarnWage).toLocaleString()})</span>
+                          <span style={{color:C.yellow}}>{tipSharePct}% tips (₪{Math.round(totalEarnTips).toLocaleString()})</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* ── Monthly net (from shifts) ── */}
-                {monthlyNetArr.length>0&&(
-                  <div id="stat-monthly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📊 Net Pay by Month · Shifts</div>
-                    {monthlyNetArr.map(([mk,val])=>{
-                      const [yr,mo2]=mk.split("-").map(Number);
-                      const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
+                {/* ── Earnings by Day of Week ── */}
+                {dowEarn.some(Boolean)&&(
+                  <div id="stat-dow-earn" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>💸 Avg Earnings by Day of Week</div>
+                    <div style={{display:"flex",gap:12,marginBottom:10}}>
+                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
+                      ))}
+                    </div>
+                    {DAYS.map((day,i)=>{
+                      const d=dowEarn[i];
+                      if(!d)return null;
+                      const isBest=i===bestDowIdx;
                       return(
-                        <div key={mk} style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
-                          <div style={{width:44,fontSize:10,color:C.muted,flexShrink:0}}>{lbl}</div>
-                          <Bar value={val} max={maxMonthNet} color={C.green} height={8}/>
-                          <div style={{width:46,fontSize:10,color:C.green,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{Math.round(val).toLocaleString()}</div>
+                        <div key={day} style={{marginBottom:9,background:isBest?`${C.yellow}08`:undefined,borderRadius:isBest?7:0,padding:isBest?"6px 8px":"0 0 0 0"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                            <span style={{fontSize:10,fontWeight:isBest?700:400,color:isBest?C.yellow:(i===6?C.purple:i===5?C.yellow:C.text)}}>{day}{isBest?" ⭐":""}</span>
+                            <span style={{fontSize:9,color:C.muted}}>{d.cnt} shift{d.cnt!==1?"s":""} · <b style={{color:C.green}}>₪{d.net.toLocaleString()} net</b></span>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
+                            <Bar value={d.wage} max={maxDowNet} color={C.acc} height={5}/>
+                            <div style={{width:40,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{d.wage.toLocaleString()}</div>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
+                            <Bar value={d.tips} max={maxDowNet} color={C.yellow} height={5}/>
+                            <div style={{width:40,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{d.tips.toLocaleString()}</div>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
 
-                {/* ── Weekly net (from shifts) ── */}
-                {weeklyNet.length>1&&(
+                {/* ── Monthly net (from shifts) ── */}
+                {monthlyBreakArr.length>0&&(
+                  <div id="stat-monthly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>📊 Earnings by Month · Shifts</div>
+                    <div style={{display:"flex",gap:12,marginBottom:10}}>
+                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
+                      ))}
+                    </div>
+                    {monthlyBreakArr.map(([mk,v])=>{
+                      const [yr,mo2]=mk.split("-").map(Number);
+                      const lbl=`${MONTHS[mo2-1]} '${String(yr).slice(2)}`;
+                      return(
+                        <div key={mk} style={{marginBottom:10}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                            <span style={{fontSize:10,color:C.muted}}>{lbl}</span>
+                            <span style={{fontSize:10,color:C.green,fontWeight:700}}>₪{Math.round(v.net).toLocaleString()}</span>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
+                            <Bar value={v.wage} max={maxMonthBreak} color={C.acc} height={5}/>
+                            <div style={{width:44,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{Math.round(v.wage).toLocaleString()}</div>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
+                            <Bar value={v.tips} max={maxMonthBreak} color={C.yellow} height={5}/>
+                            <div style={{width:44,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{Math.round(v.tips).toLocaleString()}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── Weekly earnings (from shifts) ── */}
+                {weeklyBreakdown.length>1&&(
                   <div id="stat-weekly-net" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:10}}>📉 Net Pay by Week · Shifts</div>
-                    {weeklyNet.map(w=>(
-                      <div key={w.key} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                        <div style={{width:36,fontSize:8,color:C.muted,flexShrink:0}}>{fmtShort(w.weekStart)}</div>
-                        <Bar value={w.net} max={maxWeekNet} color={C.purple} height={6}/>
-                        <div style={{width:46,fontSize:9,color:C.purple,textAlign:"right",fontWeight:700,flexShrink:0}}>₪{w.net.toLocaleString()}</div>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,letterSpacing:"1px",textTransform:"uppercase",marginBottom:4}}>📉 Earnings by Week · Shifts</div>
+                    <div style={{display:"flex",gap:12,marginBottom:10}}>
+                      {[[C.acc,"Base"],[C.yellow,"Tips"],[C.green,"Total"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:4,fontSize:8,color:c}}><div style={{width:8,height:3,background:c,borderRadius:1}}/>{l}</div>
+                      ))}
+                    </div>
+                    {weeklyBreakdown.map(w=>(
+                      <div key={w.key} style={{marginBottom:9}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                          <span style={{fontSize:9,color:C.muted}}>{fmtShort(w.weekStart)}</span>
+                          <span style={{fontSize:9,color:C.green,fontWeight:700}}>₪{w.net.toLocaleString()}</span>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                          <div style={{width:26,fontSize:8,color:C.acc,flexShrink:0}}>Base</div>
+                          <Bar value={w.wage} max={maxWeekBreak} color={C.acc} height={5}/>
+                          <div style={{width:40,fontSize:8,color:C.acc,textAlign:"right",flexShrink:0}}>₪{w.wage.toLocaleString()}</div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <div style={{width:26,fontSize:8,color:C.yellow,flexShrink:0}}>Tips</div>
+                          <Bar value={w.tips} max={maxWeekBreak} color={C.yellow} height={5}/>
+                          <div style={{width:40,fontSize:8,color:C.yellow,textAlign:"right",flexShrink:0}}>₪{w.tips.toLocaleString()}</div>
+                        </div>
                       </div>
                     ))}
                   </div>
