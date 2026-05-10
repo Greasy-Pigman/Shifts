@@ -1774,21 +1774,23 @@ function App(){
   const selData=selWeek?weekData[selWeek]:null;
 
   const inp=(ex={})=>({background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"7px 10px",fontSize:12,fontFamily:mono,outline:"none",width:"100%",boxSizing:"border-box",...ex});
-  const badg=(col,txt)=>(<span style={{fontSize:9,fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",padding:"2px 7px",borderRadius:20,background:`${col}18`,color:col,border:`1px solid ${col}30`}}>{txt}</span>);
+  const badg=(col,txt)=>(<span style={{fontSize:10,fontWeight:700,letterSpacing:"0.5px",textTransform:"uppercase",padding:"3px 9px",borderRadius:20,background:`${col}18`,color:col,border:`1px solid ${col}30`}}>{txt}</span>);
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:mono}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=DM+Sans:wght@400;700&display=swap');
-        *{box-sizing:border-box}@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+        *{box-sizing:border-box}@keyframes slideIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}@keyframes spin{to{transform:rotate(360deg)}}
-        input:focus{border-color:${C.acc}!important;box-shadow:0 0 0 2px ${C.acc}20}button:active{opacity:.7}
+        input:focus{border-color:${C.acc}!important;box-shadow:0 0 0 3px ${C.acc}25}
+        button{transition:transform .1s ease,opacity .12s,background .15s;-webkit-tap-highlight-color:transparent}
+        button:active{transform:scale(0.93)!important;opacity:0.75!important}
+        input,select,textarea{font-size:16px!important;-webkit-text-size-adjust:100%;-webkit-appearance:none}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:${C.dim};border-radius:2px}
         @media(min-width:700px){
           .hdr-logo{width:40px!important;height:40px!important;font-size:20px!important;}
           .hdr-title{font-size:15px!important;}
           .hdr-sub{font-size:10px!important;}
-          .nav-tab{padding:13px 22px!important;font-size:12px!important;}
         }
       `}</style>
 
@@ -1867,16 +1869,7 @@ function App(){
         </div>
       )}
 
-      {/* ── Main Nav Tabs ── */}
-      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,background:C.surface,overflowX:"auto"}}>
-        {[["tracker","📋 Shifts"],["archive","📁 Archive"],["statistics","📊 Statistics"],["payslips","💳 Pay Slips"]].map(([k,l])=>(
-          <button key={k} className="nav-tab" onClick={()=>setMainTab(k)} style={{background:"none",border:"none",borderBottom:`2px solid ${mainTab===k?C.acc:"transparent"}`,color:mainTab===k?C.acc:C.muted,padding:"11px 18px",fontSize:11,fontWeight:mainTab===k?700:400,cursor:"pointer",fontFamily:mono,whiteSpace:"nowrap",transition:"all .15s"}}>
-            {l}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}
-          </button>
-        ))}
-      </div>
-
-      <div style={{maxWidth:980,margin:"0 auto",padding:"14px 13px"}}>
+      <div style={{maxWidth:980,margin:"0 auto",padding:"14px 13px 88px"}}>
 
         {/* ── Global Paste URL panel — visible from any tab ── */}
         {showPaste&&!token&&(
@@ -1981,7 +1974,7 @@ function App(){
             {shifts.length>0&&!editingShift&&(
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:13}}>
                 {[[shifts.length,"Shifts",C.text],[totalHrs.toFixed(1)+"h","Conf. Hrs",C.text],[`₪${Math.round(totalWage).toLocaleString()}`,"Paycheck",C.green],[`₪${Math.round(totalTipsConf).toLocaleString()}`,"Tips",C.purple]].map(([v,l,c])=>(
-                  <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 7px",textAlign:"center"}}><div style={{fontSize:17,fontWeight:700,color:c,marginBottom:1}}>{v}</div><div style={{fontSize:8,color:C.muted,letterSpacing:"1px",textTransform:"uppercase"}}>{l}</div></div>
+                  <div key={l} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 7px",textAlign:"center"}}><div style={{fontSize:20,fontWeight:700,color:c,marginBottom:3}}>{v}</div><div style={{fontSize:10,color:C.muted,letterSpacing:"0.5px",textTransform:"uppercase"}}>{l}</div></div>
                 ))}
               </div>
             )}
@@ -3242,6 +3235,20 @@ function App(){
           </div>
         </div>
       )}
+      {/* ── Bottom Nav Bar ── */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:C.card,borderTop:`1px solid ${C.border}`,display:"flex",zIndex:200,paddingBottom:"env(safe-area-inset-bottom,4px)"}}>
+        {[["tracker","📋","Shifts"],["archive","📁","Archive"],["statistics","📊","Stats"],["payslips","💳","Pay Slips"]].map(([k,icon,label])=>{
+          const active=mainTab===k;
+          return(
+            <button key={k} onClick={()=>setMainTab(k)}
+              style={{flex:1,background:active?`${C.acc}15`:"none",border:"none",borderTop:`2px solid ${active?C.acc:"transparent"}`,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"9px 4px 8px",cursor:"pointer",fontFamily:mono}}>
+              <span style={{fontSize:24,lineHeight:1}}>{icon}</span>
+              <span style={{fontSize:10,fontWeight:active?700:400,color:active?C.acc:C.muted}}>{label}{k==="archive"&&archiveIndex.length>0?` (${archiveIndex.length})`:""}</span>
+            </button>
+          );
+        })}
+      </div>
+
     </div>
   );
 }
