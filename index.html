@@ -81,6 +81,8 @@ const WEEK_PFX   = "yotam_week_";
 const CAL_KEY    = "shiftly_cal_id";
 const PAYSLIP_PFX= "yotam_payslip_";
 const PAYSLIP_IDX= "yotam_payslips";
+const MGRRPT_PFX = "yotam_mgrrpt_";
+const MGRRPT_IDX = "yotam_mgrrpts";
 const LOC_KEY    = "shiftly_work_location";
 const DRIVE_API  = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
@@ -855,6 +857,7 @@ function App(){
         }catch{}
       }
       try{const r=await window.storage.get(PAYSLIP_IDX);if(r)setPaySlips(JSON.parse(r.value));}catch{}
+      try{const r=await window.storage.get(MGRRPT_IDX);if(r)setMgrReports(JSON.parse(r.value));}catch{}
       try{const r=await window.storage.get(LOC_KEY);if(r&&r.value)setWorkLocation(r.value);}catch{}
     })();
     // Check URL hash for token (handles redirect back to this page)
@@ -972,6 +975,14 @@ function App(){
         for(const [id,val] of Object.entries(data.paySlipFiles))
           await window.storage.set(PAYSLIP_PFX+id,val).catch(()=>{});
       }
+      if(Array.isArray(data.mgrReports)&&data.mgrReports.length>0){
+        setMgrReports(data.mgrReports);
+        await window.storage.set(MGRRPT_IDX,JSON.stringify(data.mgrReports)).catch(()=>{});
+      }
+      if(data.mgrRptFiles){
+        for(const [id,val] of Object.entries(data.mgrRptFiles))
+          await window.storage.set(MGRRPT_PFX+id,val).catch(()=>{});
+      }
       setDriveStatus("saved");setDriveError(null);
       return true;
     }catch(e){
@@ -989,7 +1000,9 @@ function App(){
       for(const key of archiveIndex){const r=await window.storage.get(FILE_PFX+key).catch(()=>null);if(r)archiveFiles[key]=r.value;}
       const paySlipFiles={};
       for(const sl of paySlips){const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);if(r)paySlipFiles[sl.id]=r.value;}
-      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,archiveFiles,paySlipFiles,savedAt:new Date().toISOString(),version:"v70"};
+      const mgrRptFiles={};
+      for(const rpt of mgrReports){const r=await window.storage.get(MGRRPT_PFX+rpt.id).catch(()=>null);if(r)mgrRptFiles[rpt.id]=r.value;}
+      const payload={shifts,dismissed,archiveIndex,weekData,paySlips,archiveFiles,paySlipFiles,mgrReports,mgrRptFiles,savedAt:new Date().toISOString(),version:"v71"};
       let result=await driveWrite(token,driveFileIdRef.current,payload);
       if(result?._gone){
         driveFileIdRef.current=null;
@@ -1010,7 +1023,9 @@ function App(){
         for(const key of archiveIndexData){const r=await window.storage.get(FILE_PFX+key).catch(()=>null);if(r)archiveFiles[key]=r.value;}
         const paySlipFiles={};
         for(const sl of paySlips){const r=await window.storage.get(PAYSLIP_PFX+sl.id).catch(()=>null);if(r)paySlipFiles[sl.id]=r.value;}
-        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,archiveFiles,paySlipFiles,savedAt:new Date().toISOString(),version:"v70"};
+        const mgrRptFiles={};
+        for(const rpt of mgrReports){const r=await window.storage.get(MGRRPT_PFX+rpt.id).catch(()=>null);if(r)mgrRptFiles[rpt.id]=r.value;}
+        const payload={shifts:shiftsData,dismissed:dismissedData,archiveIndex:archiveIndexData,weekData:weekDataData,paySlips,archiveFiles,paySlipFiles,mgrReports,mgrRptFiles,savedAt:new Date().toISOString(),version:"v71"};
         let result=await driveWrite(token,driveFileIdRef.current,payload);
         if(result?._gone){driveFileIdRef.current=null;result=await driveWrite(token,null,payload);}
         driveFileIdRef.current=result?.id||driveFileIdRef.current;
@@ -1052,6 +1067,12 @@ function App(){
   const [editingSlipId, setEditingSlipId] = useState(null);
   const [slipEditBuf, setSlipEditBuf] = useState({});
   const slipInputRef = useRef(null);
+  const [mgrReports, setMgrReports] = useState([]);
+  const [mgrRptUploading, setMgrRptUploading] = useState(false);
+  const [mgrRptEditId, setMgrRptEditId] = useState(null);
+  const [mgrRptBuf, setMgrRptBuf] = useState({monthKey:'',notWorkedDays:[]});
+  const [mgrRptPreview, setMgrRptPreview] = useState(null);
+  const mgrRptInputRef = useRef(null);
 
   async function doReset(){
     const keys=[SHIFTS_KEY,TOKEN_KEY,NOTIF_KEY,ARCHIVE_KEY,PAYSLIP_IDX];
@@ -1479,6 +1500,65 @@ function App(){
       }
     }finally{setReanalyzing(false);}
   }
+  async function addMgrReport(file){
+    setMgrRptUploading(true);
+    try{
+      const base64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});
+      const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+      const monthKey=new Date().toISOString().slice(0,7);
+      const report={id,monthKey,name:file.name,size:file.size,type:file.type,uploaded:new Date().toISOString(),notWorkedDays:[]};
+      const updated=[...mgrReports,report];
+      await window.storage.set(MGRRPT_PFX+id,base64).catch(()=>{});
+      await window.storage.set(MGRRPT_IDX,JSON.stringify(updated)).catch(()=>{});
+      setMgrReports(updated);
+      setMgrRptBuf({monthKey,notWorkedDays:[]});
+      setMgrRptEditId(id);
+    }finally{setMgrRptUploading(false);}
+  }
+  async function saveMgrReport(){
+    const updated=mgrReports.map(r=>r.id===mgrRptEditId?{...r,monthKey:mgrRptBuf.monthKey,notWorkedDays:mgrRptBuf.notWorkedDays}:r);
+    await window.storage.set(MGRRPT_IDX,JSON.stringify(updated)).catch(()=>{});
+    setMgrReports(updated);
+    setMgrRptEditId(null);
+  }
+  async function deleteMgrReport(id){
+    await window.storage.delete(MGRRPT_PFX+id).catch(()=>{});
+    const updated=mgrReports.filter(r=>r.id!==id);
+    await window.storage.set(MGRRPT_IDX,JSON.stringify(updated)).catch(()=>{});
+    setMgrReports(updated);
+    if(mgrRptEditId===id)setMgrRptEditId(null);
+  }
+  async function openMgrRptPreview(id){
+    const r=await window.storage.get(MGRRPT_PFX+id).catch(()=>null);
+    if(!r)return;
+    const rpt=mgrReports.find(x=>x.id===id);
+    const b64=r.value.split(',')[1];const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const blob=new Blob([bytes],{type:rpt?.type||'image/jpeg'});
+    setMgrRptPreview({blobUrl:URL.createObjectURL(blob),name:rpt?.name||'report'});
+  }
+  function closeMgrRptPreview(){if(mgrRptPreview?.blobUrl)URL.revokeObjectURL(mgrRptPreview.blobUrl);setMgrRptPreview(null);}
+  function toggleNotWorkedDay(day){
+    setMgrRptBuf(b=>{
+      const s=new Set(b.notWorkedDays);
+      s.has(day)?s.delete(day):s.add(day);
+      return{...b,notWorkedDays:[...s]};
+    });
+  }
+  function getMgrComparison(report){
+    const [yr,mo]=report.monthKey.split('-').map(Number);
+    const daysInMonth=new Date(yr,mo,0).getDate();
+    const monthShifts=Object.values(weekData).flatMap(w=>w.myShifts||[]).filter(sh=>sh.date?.startsWith(report.monthKey));
+    const archiveDaySet=new Set(monthShifts.map(sh=>parseInt(sh.date.split('-')[2])));
+    const notWorkedSet=new Set(report.notWorkedDays||[]);
+    const unpaidDays=[...archiveDaySet].filter(d=>notWorkedSet.has(d)).sort((a,b)=>a-b);
+    const allDays=Array.from({length:daysInMonth},(_,i)=>i+1);
+    const managerWorked=allDays.filter(d=>!notWorkedSet.has(d));
+    const noArchive=managerWorked.filter(d=>!archiveDaySet.has(d));
+    const matched=managerWorked.filter(d=>archiveDaySet.has(d));
+    return{daysInMonth,archiveDaySet,notWorkedSet,unpaidDays,noArchive,matched,monthShifts};
+  }
+
   function startEditSlip(sl){
     const a=sl.analysis||{};
     setSlipEditBuf({month:sl.monthKey||'',gross:a.gross??'',net:a.net??'',tax:a.tax??'',bituach:a.bituach??'',pension:a.pension??'',health:a.health??'',hours:a.hours??''});
@@ -1768,6 +1848,7 @@ function App(){
       {id:"slip-insights",label:"Smart Insights",icon:"💡"},
     ]:[]),
     {id:"slip-list",label:"Pay Slips",icon:"🗂"},
+    {id:"slip-mgrrpt",label:"Verify Hours",icon:"✅"},
   ];
   const scrollTo=id=>{const el=document.getElementById(id);if(el)el.scrollIntoView({behavior:"smooth",block:"start"});};
 
@@ -3147,11 +3228,153 @@ function App(){
                 )}
               </div>
 
+              {/* ── Manager Hours Report ── */}
+              <div id="slip-mgrrpt" style={{background:C.card,borderRadius:10,border:`1px solid ${C.border}`,padding:"14px 12px",display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:16}}>✅</span>
+                  <span style={{flex:1,fontSize:13,fontWeight:700,color:C.text,fontFamily:mono}}>Verify Manager Hours</span>
+                  <button onClick={()=>mgrRptInputRef.current?.click()}
+                    style={{background:`${C.acc}20`,border:`1px solid ${C.acc}40`,borderRadius:7,color:C.acc,padding:"6px 11px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>
+                    {mgrRptUploading?"Uploading...":"+ Upload Report"}
+                  </button>
+                </div>
+                <input ref={mgrRptInputRef} type="file" accept="image/*" style={{display:"none"}}
+                  onChange={async e=>{const f=e.target.files?.[0];if(f){await addMgrReport(f);}e.target.value='';}}/>
+                <div style={{fontSize:10,color:C.muted}}>Upload your monthly manager hours report. Tap days marked "???????" (not worked) on the calendar to find missing pay.</div>
+
+                {mgrReports.length===0&&(
+                  <div style={{textAlign:"center",padding:"16px 0",color:C.muted,fontSize:11}}>No reports uploaded yet</div>
+                )}
+
+                {mgrReports.map(rpt=>{
+                  const isEdit=mgrRptEditId===rpt.id;
+                  const comp=!isEdit&&rpt.monthKey?getMgrComparison(rpt):null;
+                  return(
+                    <div key={rpt.id} style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+                      {/* Report header */}
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"9px 10px",background:`${C.acc}08`}}>
+                        <span style={{fontSize:12}}>📋</span>
+                        <span style={{flex:1,fontSize:11,fontWeight:700,color:C.text,fontFamily:mono}}>{rpt.monthKey||"Unknown month"}</span>
+                        <button onClick={()=>openMgrRptPreview(rpt.id)}
+                          style={{background:`${C.acc}15`,border:`1px solid ${C.acc}40`,borderRadius:6,color:C.acc,padding:"4px 8px",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:mono}}>👁 View</button>
+                        {!isEdit&&(
+                          <button onClick={()=>{setMgrRptEditId(rpt.id);setMgrRptBuf({monthKey:rpt.monthKey||new Date().toISOString().slice(0,7),notWorkedDays:rpt.notWorkedDays||[]});}}
+                            style={{background:`${C.yellow}15`,border:`1px solid ${C.yellow}40`,borderRadius:6,color:C.yellow,padding:"4px 8px",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:mono}}>✏ Edit</button>
+                        )}
+                        <button onClick={()=>deleteMgrReport(rpt.id)}
+                          style={{background:`${C.red}15`,border:`1px solid ${C.red}40`,borderRadius:6,color:C.red,padding:"4px 8px",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:mono}}>🗑</button>
+                      </div>
+
+                      {/* Edit panel */}
+                      {isEdit&&(
+                        <div style={{padding:"10px 10px 12px",display:"flex",flexDirection:"column",gap:10}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>Month:</span>
+                            <input type="month" value={mgrRptBuf.monthKey} onChange={e=>setMgrRptBuf(b=>({...b,monthKey:e.target.value}))}
+                              style={{flex:1,background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 8px",color:C.text,fontSize:13,fontFamily:mono}}/>
+                          </div>
+                          <div style={{fontSize:10,color:C.muted}}>Tap days marked "???????" (not worked / not paid):</div>
+                          {(()=>{
+                            const [yr,mo]=(mgrRptBuf.monthKey||'').split('-').map(Number);
+                            if(!yr||!mo)return<div style={{fontSize:10,color:C.muted,textAlign:"center"}}>Select a month first</div>;
+                            const daysInMonth=new Date(yr,mo,0).getDate();
+                            const firstDow=new Date(yr,mo-1,1).getDay();
+                            const editComp=getMgrComparison({...rpt,monthKey:mgrRptBuf.monthKey,notWorkedDays:mgrRptBuf.notWorkedDays});
+                            const cells=[];
+                            ['S','M','T','W','T','F','S'].forEach((d,i)=>cells.push(
+                              <div key={`h${i}`} style={{textAlign:"center",fontSize:9,color:C.muted,fontWeight:700,padding:"2px 0"}}>{d}</div>
+                            ));
+                            for(let i=0;i<firstDow;i++)cells.push(<div key={`e${i}`}/>);
+                            for(let day=1;day<=daysInMonth;day++){
+                              const notWorked=mgrRptBuf.notWorkedDays.includes(day);
+                              const hasShift=editComp.archiveDaySet.has(day);
+                              const isConflict=notWorked&&hasShift;
+                              const bg=isConflict?`${C.red}35`:notWorked?`${C.border}60`:hasShift?`${C.green}25`:"transparent";
+                              const col=isConflict?C.red:notWorked?C.muted:hasShift?C.green:C.text;
+                              const bdr=isConflict?C.red:notWorked?C.border:hasShift?`${C.green}50`:"transparent";
+                              cells.push(
+                                <div key={day} onClick={()=>toggleNotWorkedDay(day)}
+                                  style={{textAlign:"center",borderRadius:6,padding:"5px 2px",fontSize:11,fontWeight:notWorked||hasShift?700:400,
+                                    background:bg,color:col,border:`1px solid ${bdr}`,cursor:"pointer",userSelect:"none",lineHeight:1.2}}>
+                                  {day}
+                                  {notWorked&&<div style={{fontSize:6,lineHeight:1,opacity:0.8}}>✕</div>}
+                                </div>
+                              );
+                            }
+                            return(
+                              <div>
+                                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>{cells}</div>
+                                <div style={{display:"flex",flexWrap:"wrap",gap:"4px 12px",marginTop:8,fontSize:9,color:C.muted}}>
+                                  <span><span style={{color:C.green}}>■</span> Shift in archive</span>
+                                  <span><span style={{color:C.muted}}>■</span> Not worked (?)</span>
+                                  <span><span style={{color:C.red}}>■</span> Conflict</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          <div style={{display:"flex",gap:8}}>
+                            <button onClick={saveMgrReport}
+                              style={{flex:1,background:`${C.green}20`,border:`1px solid ${C.green}40`,borderRadius:7,color:C.green,padding:"8px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✓ Save</button>
+                            <button onClick={()=>setMgrRptEditId(null)}
+                              style={{flex:1,background:`${C.red}15`,border:`1px solid ${C.red}30`,borderRadius:7,color:C.red,padding:"8px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✕ Cancel</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Comparison results */}
+                      {!isEdit&&comp&&(
+                        <div style={{padding:"8px 10px 10px",display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:"4px 14px",fontSize:10}}>
+                            <span style={{color:C.green}}>✓ {comp.matched.length} matched</span>
+                            <span style={{color:C.muted}}>⚠ {comp.noArchive.length} no archive</span>
+                            <span style={{color:comp.unpaidDays.length?C.red:C.muted}}>❌ {comp.unpaidDays.length} conflicts</span>
+                          </div>
+                          {comp.unpaidDays.length>0&&(
+                            <div style={{background:`${C.red}12`,border:`1px solid ${C.red}35`,borderRadius:7,padding:"8px 10px"}}>
+                              <div style={{fontSize:10,fontWeight:700,color:C.red,marginBottom:5}}>⚠️ Possible unpaid shifts:</div>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:"4px 8px",marginBottom:6}}>
+                                {comp.unpaidDays.map(day=>(
+                                  <span key={day} style={{background:`${C.red}25`,border:`1px solid ${C.red}50`,borderRadius:5,padding:"3px 8px",fontSize:11,fontWeight:700,color:C.red,fontFamily:mono}}>
+                                    {rpt.monthKey}-{String(day).padStart(2,'0')}
+                                  </span>
+                                ))}
+                              </div>
+                              <div style={{fontSize:9,color:C.muted}}>Archive has shifts on these days but manager report shows "???????" (not worked). Verify with your manager.</div>
+                            </div>
+                          )}
+                          {comp.unpaidDays.length===0&&comp.matched.length>0&&(
+                            <div style={{fontSize:10,color:C.green}}>✓ All archive days match manager report</div>
+                          )}
+                          {comp.notWorkedSet.size===0&&(
+                            <div style={{fontSize:9,color:C.muted}}>No "not worked" days marked — click ✏ Edit to mark "???????" days</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
             </div>
           </div>
         )}
 
       </div>
+
+      {/* ── Manager report image preview modal ── */}
+      {mgrRptPreview&&(
+        <div onClick={closeMgrRptPreview} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000dd",zIndex:3000,display:"flex",flexDirection:"column"}}>
+          <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
+            <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+              <div style={{flex:1,fontSize:11,color:C.text,fontWeight:700,fontFamily:mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mgrRptPreview.name}</div>
+              <button onClick={closeMgrRptPreview} style={{background:`${C.red}20`,border:`1px solid ${C.red}40`,borderRadius:6,color:C.red,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:mono}}>✕ Close</button>
+            </div>
+            <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",background:"#111",padding:8}}>
+              <img src={mgrRptPreview.blobUrl} alt="Manager report" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:4}}/>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Pay slip preview modal ── */}
       {previewSlip&&(
